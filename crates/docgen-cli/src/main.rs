@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
 use docgen_core::parse_document;
+use docgen_excalidraw::ExcalidrawRenderer;
 use docgen_mermaid::MermaidRenderer;
 use docgen_typst::TypstRenderer;
 
@@ -59,7 +60,8 @@ enum Command {
         #[arg(long)]
         date: Option<String>,
     },
-    /// Render a standalone mermaid diagram to SVG or PNG.
+    /// Render a standalone diagram (mermaid or raw excalidraw JSON) to
+    /// SVG or PNG.
     Diagram {
         /// Input mermaid source file.
         input: PathBuf,
@@ -109,8 +111,13 @@ fn render(
 
     match format.to_ascii_lowercase().as_str() {
         "pdf" => {
-            let outcome = docgen_core::assets::render_diagrams(&doc, &MermaidRenderer::new())
-                .context("rendering diagrams")?;
+            let excalidraw = ExcalidrawRenderer::new();
+            let mermaid = MermaidRenderer::new();
+            let outcome = docgen_core::assets::render_diagrams_with(
+                &doc,
+                &[&mermaid, &excalidraw],
+            )
+            .context("rendering diagrams")?;
             warn_skipped(&outcome.skipped);
 
             let mut renderer = TypstRenderer::new_embedded();
@@ -131,9 +138,13 @@ fn render(
         }
         "docx" => {
             // Diagrams become PNG images inside the docx.
-            let outcome =
-                docgen_core::assets::render_diagrams(&doc, &MermaidRenderer::raster())
-                    .context("rendering diagrams")?;
+            let excalidraw = ExcalidrawRenderer::raster();
+            let mermaid = MermaidRenderer::raster();
+            let outcome = docgen_core::assets::render_diagrams_with(
+                &doc,
+                &[&mermaid, &excalidraw],
+            )
+            .context("rendering diagrams")?;
             warn_skipped(&outcome.skipped);
 
             let bytes = match template {
@@ -154,9 +165,13 @@ fn render(
         }
         "pptx" => {
             // Diagrams become PNG images inside the deck.
-            let outcome =
-                docgen_core::assets::render_diagrams(&doc, &MermaidRenderer::raster())
-                    .context("rendering diagrams")?;
+            let excalidraw = ExcalidrawRenderer::raster();
+            let mermaid = MermaidRenderer::raster();
+            let outcome = docgen_core::assets::render_diagrams_with(
+                &doc,
+                &[&mermaid, &excalidraw],
+            )
+            .context("rendering diagrams")?;
             warn_skipped(&outcome.skipped);
 
             let bytes = match template {
@@ -203,12 +218,18 @@ fn diff(
         report.summary()
     );
 
-    let old_outcome =
-        docgen_core::assets::render_diagrams(&old, &MermaidRenderer::raster())
-            .context("rendering old diagrams")?;
-    let new_outcome =
-        docgen_core::assets::render_diagrams(&new, &MermaidRenderer::raster())
-            .context("rendering new diagrams")?;
+    let excalidraw = ExcalidrawRenderer::raster();
+    let mermaid = MermaidRenderer::raster();
+    let old_outcome = docgen_core::assets::render_diagrams_with(
+        &old,
+        &[&mermaid, &excalidraw],
+    )
+    .context("rendering old diagrams")?;
+    let new_outcome = docgen_core::assets::render_diagrams_with(
+        &new,
+        &[&mermaid, &excalidraw],
+    )
+    .context("rendering new diagrams")?;
 
     let identity = match date {
         Some(d) => docgen_office::docx::RevisionIdentity::new(author, d),
@@ -255,20 +276,60 @@ fn warn_skipped(skipped: &[String]) {
     }
 }
 
+/// A standalone diagram source: mermaid text or raw `.excalidraw` /
+/// excalidraw JSON (detected by extension, falling back to content
+/// sniffing — an object with an `elements` array).
+enum DiagramSource {
+    Mermaid(String),
+    Excalidraw(String),
+}
+
+fn detect_diagram(input: &Path, source: String) -> DiagramSource {
+    let ext = input
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    if ext == "excalidraw" || ext == "json" {
+        return DiagramSource::Excalidraw(source);
+    }
+    let trimmed = source.trim_start();
+    if trimmed.starts_with('{')
+        && (source.contains("\"elements\"") || source.contains("\"type\": \"excalidraw\""))
+    {
+        return DiagramSource::Excalidraw(source);
+    }
+    DiagramSource::Mermaid(source)
+}
+
 fn diagram(input: PathBuf, out: Option<PathBuf>, format: &str) -> anyhow::Result<()> {
     let source = std::fs::read_to_string(&input)
         .with_context(|| format!("reading {}", input.display()))?;
-    let renderer = MermaidRenderer::new();
-    let (bytes, out) = match format.to_ascii_lowercase().as_str() {
-        "svg" => {
-            let svg = renderer.render_svg(&source).context("mermaid render")?;
+    let (bytes, out) = match (detect_diagram(&input, source), format.to_ascii_lowercase().as_str())
+    {
+        (DiagramSource::Mermaid(source), "svg") => {
+            let svg = MermaidRenderer::new()
+                .render_svg(&source)
+                .context("mermaid render")?;
             (svg.into_bytes(), out.unwrap_or_else(|| with_extension(&input, "svg")))
         }
-        "png" => {
-            let png = renderer.render_png(&source).context("mermaid render")?;
+        (DiagramSource::Mermaid(source), "png") => {
+            let png = MermaidRenderer::new()
+                .render_png(&source)
+                .context("mermaid render")?;
             (png, out.unwrap_or_else(|| with_extension(&input, "png")))
         }
-        other => bail!("unsupported diagram format {other:?} (use svg or png)"),
+        (DiagramSource::Excalidraw(source), "svg") => {
+            let svg = docgen_excalidraw::render_source_svg(&source)
+                .context("excalidraw render")?;
+            (svg.into_bytes(), out.unwrap_or_else(|| with_extension(&input, "svg")))
+        }
+        (DiagramSource::Excalidraw(source), "png") => {
+            let png = docgen_excalidraw::render_source_png(&source)
+                .context("excalidraw render")?;
+            (png, out.unwrap_or_else(|| with_extension(&input, "png")))
+        }
+        (_, other) => bail!("unsupported diagram format {other:?} (use svg or png)"),
     };
     std::fs::write(&out, bytes).with_context(|| format!("writing {}", out.display()))?;
     println!("wrote {}", out.display());

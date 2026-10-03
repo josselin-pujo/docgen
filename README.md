@@ -11,7 +11,7 @@ CLI, inside CI, and in a wasm runtime (`wasm32-wasip1/2` are the supported
 targets; a browser `wasm32-unknown-unknown` build of the render core is a
 roadmap item).
 
-## Status (M3 — working today)
+## Status (M4 — working today)
 
 - **Markdown + rich YAML frontmatter** → typed document model
   (`docgen-core`): headings, paragraphs, inline styles (bold/italic/code/
@@ -83,10 +83,23 @@ roadmap item).
   `docgen diff old.md new.md --format pptx` renders the new revision with
   small colored chips on changed slides (NEW/UPDATED/MOVED), a "Removed in
   this revision" slide, and a closing revision summary.
+- **Excalidraw, natively** (`docgen-excalidraw`): raw `.excalidraw` JSON
+  is a first-class input — as standalone files
+  (`docgen diagram scene.excalidraw -o out.svg|--format png`) and as
+  ` ```excalidraw ` code blocks in markdown. A permissive serde model
+  round-trips scenes losslessly (unknown fields preserved); rendering is
+  fully native — roughr (seeded per element, so output is
+  byte-deterministic) for the hand-drawn geometry, bundled Excalifont /
+  Virgil / Liberation / Cascadia TTFs shaped into SVG paths (no font
+  machinery needed downstream), data-URL images embedded, `raster`
+  feature PNGs via resvg for the office backends. Diffing is
+  element-id-anchored: added/removed/changed elements with the changed
+  *fields* enumerated, volatile bookkeeping ignored — surfaced as a
+  detailed Word comment when an externally-edited scene changes.
 - **CLI**:
   - `docgen render doc.md [-o out] [--format pdf|docx|pptx] [--template ...]`
   - `docgen diff old.md new.md [-o out] [--format docx|pptx] [--author A] [--date D]`
-  - `docgen diagram flow.mmd [-o out.svg|--format png]`
+  - `docgen diagram flow.mmd | scene.excalidraw [-o out.svg|--format png]`
 
 ```bash
 cargo run -p docgen-cli -- render examples/sample.md   # → examples/sample.pdf
@@ -179,20 +192,21 @@ WASI preview1 surface is never needed.
 - SVG images in decks (PowerPoint `svgBlip` + PNG fallback) instead of
   PNG-only, for crisper projection.
 
-### M4 — Excalidraw
+### M4 — Excalidraw ✅ (shipped; refinements below)
 
-- Parse native `.excalidraw` JSON into the model (serde types for the
-  element schema).
-- Native renderer to SVG using `roughr` (Rust port of Rough.js) +
-  `cosmic-text` for label metrics with embedded Excalifont — no browser, no
-  DOM shims, wasm-safe. Precedent: moona3k's `excalidraw-export` proved a
-  DOM-free roughjs renderer matches the web output closely.
-- Structural diff on element ids: externally-edited JSON is merged by
-  element id (replace changed elements, add new ones) rather than
-  regenerated wholesale.
-- Mermaid → Excalidraw via `@excalidraw/mermaid-to-excalidraw` inside the
-  JS-runtime trait (rquickjs native/wasm). This package drags in the real
-  mermaid.js parser, so it stays an optional feature.
+- Mermaid → Excalidraw conversion (`@excalidraw/mermaid-to-excalidraw`
+  in the rquickjs runtime) — still the planned approach; raw JSON input
+  (shipped) is deliberately independent of it.
+- Bindings: honor arrow start/end binding geometry when bound elements
+  move (arrows currently follow their stored points only).
+- Text: rich text (per-span formatting), containers with auto-grow, and
+  `frame` elements are not rendered yet.
+- Roundness fidelity for diamonds/ellipses; freedraw pressure-variable
+  stroke width.
+
+(Implementation note: the shipped renderer uses `ab_glyph` for font
+shaping rather than the originally sketched `cosmic-text` — lighter,
+wasm-safe, and text becomes SVG paths either way.)
 
 ### M5 — wasm packaging & CI
 

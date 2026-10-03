@@ -13,6 +13,7 @@ path = "src/main.rs"
 docgen-core = { workspace = true }
 docgen-typst = { workspace = true }
 docgen-mermaid = { workspace = true }
+docgen-excalidraw = { workspace = true, features = ["raster"] }
 docgen-office = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }

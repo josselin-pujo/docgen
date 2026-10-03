@@ -1,0 +1,27 @@
+[package]
+name = "docgen-excalidraw"
+description = "Native Excalidraw scene rendering and diffing for docgen: serde model, roughr-based SVG output, element-id structural diff."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+docgen-core = { workspace = true }
+ab_glyph = "0.2"
+base64 = "0.22"
+roughr = "0.14"
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[features]
+# Raster (PNG) output for consumers without SVG support (docx/pptx).
+# Text is rendered as SVG paths, so no fontdb is needed downstream.
+default = []
+raster = ["dep:resvg"]
+
+[dependencies.resvg]
+version = "0.47"
+optional = true
+
+[dev-dependencies]

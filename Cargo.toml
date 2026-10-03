@@ -4,6 +4,7 @@ members = [
     "crates/docgen-core",
     "crates/docgen-typst",
     "crates/docgen-mermaid",
+    "crates/docgen-excalidraw",
     "crates/docgen-office",
     "crates/docgen-wasm",
     "crates/docgen-cli",
@@ -18,6 +19,7 @@ license = "MIT OR Apache-2.0"
 docgen-core = { path = "crates/docgen-core" }
 docgen-typst = { path = "crates/docgen-typst" }
 docgen-mermaid = { path = "crates/docgen-mermaid" }
+docgen-excalidraw = { path = "crates/docgen-excalidraw" }
 docgen-office = { path = "crates/docgen-office" }
 
 serde = { version = "1", features = ["derive"] }

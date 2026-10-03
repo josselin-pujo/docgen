@@ -4,7 +4,7 @@
 
 use docgen_core::assets::AssetMap;
 use docgen_core::diff::{flatten_runs_pub, ContentChange, DiffPlan, LineOp, Run, RunOp, Step};
-use docgen_core::model::{Block, BlockKind, Document, Inline, ListItem, TableRow};
+use docgen_core::model::{Block, BlockKind, DiagramFormat, Document, Inline, ListItem, TableRow};
 use quick_xml::Reader;
 
 use super::package::{png_dimensions, Package};
@@ -871,9 +871,53 @@ impl<'a> Emitter<'a> {
                 self.paragraph_open(Some("CodeGap"), Mark::None, false);
                 self.paragraph_close();
             }
-            ContentChange::Source { .. } => {
-                self.add_comment("Diagram updated: replaced render; review the change.");
+            ContentChange::Source {
+                format,
+                old: old_src,
+                new: new_src,
+            } => {
                 self.in_block = true;
+                let comment = match format {
+                    DiagramFormat::Excalidraw => {
+                        // Element-level summary for externally-edited scenes.
+                        let detail = match (
+                            docgen_excalidraw::parse_scene(old_src),
+                            docgen_excalidraw::parse_scene(new_src),
+                        ) {
+                            (Ok(o), Ok(n)) => {
+                                let d = docgen_excalidraw::diff_scenes(&o, &n);
+                                if d.is_empty() {
+                                    "Excalidraw scene metadata changed (no element edits)."
+                                        .to_string()
+                                } else {
+                                    let fields = d
+                                        .changed
+                                        .iter()
+                                        .take(3)
+                                        .map(|c| format!("{}: {}", c.id, c.fields.join("/")))
+                                        .collect::<Vec<_>>()
+                                        .join("; ");
+                                    format!(
+                                        "Excalidraw scene updated — {}; {}",
+                                        d.summary(),
+                                        if fields.is_empty() {
+                                            String::new()
+                                        } else {
+                                            format!("changed fields: {fields}")
+                                        }
+                                    )
+                                }
+                            }
+                            _ => "Excalidraw scene updated (source changed).".to_string(),
+                        };
+                        detail
+                    }
+                    DiagramFormat::Mermaid => {
+                        "Diagram updated: replaced render; review the change.".to_string()
+                    }
+                };
+                self.add_comment(&comment);
+                self.add_comment(&comment);
                 if old_assets.get(&old.id).is_some() {
                     self.write_diagram(&old.id, Mark::Delete, old_assets);
                 } else if let BlockKind::Diagram { source, .. } = &old.kind {

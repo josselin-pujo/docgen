@@ -96,3 +96,56 @@ pub fn render_diagrams(doc: &Document, renderer: &dyn DiagramRenderer) -> Result
     }
     Ok(outcome)
 }
+
+/// Renders every diagram block through a chain of renderers: the first
+/// one that claims the block's format wins. A block every renderer
+/// declines is skipped (visible placeholder downstream); a renderer that
+/// claims a format but fails on the source aborts.
+pub fn render_diagrams_with(
+    doc: &Document,
+    renderers: &[&dyn DiagramRenderer],
+) -> Result<DiagramOutcome> {
+    let mut outcome = DiagramOutcome {
+        assets: AssetMap::new(),
+        skipped: Vec::new(),
+    };
+
+    let mut failures: Vec<String> = Vec::new();
+    for block in &doc.blocks {
+        if let crate::model::BlockKind::Diagram { format, source } = &block.kind {
+            let mut handled = false;
+            let mut last_err = None;
+            for renderer in renderers {
+                match renderer.render(&block.id, *format, source) {
+                    Ok(asset) => {
+                        outcome.assets.insert(block.id.clone(), asset);
+                        handled = true;
+                        break;
+                    }
+                    Err(Error::Diagram(msg)) if msg.starts_with("unsupported") => continue,
+                    Err(e) => {
+                        last_err = Some(e);
+                        break;
+                    }
+                }
+            }
+            if !handled {
+                if let Some(e) = last_err {
+                    failures.push(format!("{}: {e}", block.id));
+                } else {
+                    outcome
+                        .skipped
+                        .push(format!("{} ({})", block.id, format.as_str()));
+                }
+            }
+        }
+    }
+
+    if !failures.is_empty() {
+        return Err(Error::Diagram(format!(
+            "diagram rendering failed for: {}",
+            failures.join(", ")
+        )));
+    }
+    Ok(outcome)
+}

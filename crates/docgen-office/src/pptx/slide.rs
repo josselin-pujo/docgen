@@ -325,12 +325,12 @@ pub(crate) fn emit_slide(
                         false,
                     ),
                     Elem::Bullets(bullets) => bullets_shape(&mut ctx, skin, bullet_area, bullets),
-                    Elem::Table(rows) => table(&mut ctx, skin.body_geom, rows),
+                    Elem::Table(rows) => table(&mut ctx, bullet_area, rows),
                     Elem::Picture { block_id, alt } => {
-                        picture(&mut ctx, skin.body_geom, block_id, alt, assets, media)?
+                        picture(&mut ctx, bullet_area, block_id, alt, assets, media)?
                     }
                     Elem::Code { language, code } => {
-                        code_box(&mut ctx, skin.body_geom, language.as_deref(), code)
+                        code_box(&mut ctx, bullet_area, language.as_deref(), code)
                     }
                 }
             }
