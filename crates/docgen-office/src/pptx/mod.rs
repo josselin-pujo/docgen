@@ -165,6 +165,7 @@ pub fn validate_pptx(bytes: &[u8]) -> CoreResult<()> {
         let path = format!("ppt/{target}");
         let slide_xml = read(&path)?;
         parse_xml(&slide_xml)?;
+        check_tables(&slide_xml)?;
         // The slide's layout must exist too.
         let rels_name = format!(
             "ppt/slides/_rels/{}",
@@ -184,6 +185,8 @@ pub fn validate_pptx(bytes: &[u8]) -> CoreResult<()> {
     Ok(())
 }
 
+/// Well-formedness plus structural invariants PowerPoint enforces at
+/// load (violations surface as its "repair" dialog, which strips content).
 fn parse_xml(xml: &str) -> CoreResult<()> {
     use quick_xml::Reader;
     let mut reader = Reader::from_str(xml);
@@ -194,6 +197,59 @@ fn parse_xml(xml: &str) -> CoreResult<()> {
             Err(e) => return Err(docgen_core::Error::Backend(format!("bad XML: {e}"))),
         }
     }
+}
+
+/// DrawingML tables must declare their columns inside `a:tblGrid`;
+/// PowerPoint discards the whole table otherwise.
+fn check_tables(slide_xml: &str) -> CoreResult<()> {
+    if !slide_xml.contains("<a:tbl") {
+        return Ok(());
+    }
+    let mut ok = true;
+    let mut depth_tbl = 0usize;
+    let mut depth_grid = 0usize;
+    let mut seen_grid = false;
+    let mut reader = quick_xml::Reader::from_str(slide_xml);
+    loop {
+        match reader.read_event() {
+            Ok(quick_xml::events::Event::Start(e)) => {
+                let local = e.local_name();
+                let name = local.as_ref();
+                if name == "a:tbl" {
+                    depth_tbl += 1;
+                    seen_grid = false;
+                } else if name == "a:tblGrid" && depth_tbl > 0 {
+                    depth_grid += 1;
+                    seen_grid = true;
+                } else if name == "a:tr" && depth_tbl > 0 && depth_grid == 0 {
+                    ok = false; // row before any tblGrid
+                }
+            }
+            Ok(quick_xml::events::Event::End(e)) => {
+                let local = e.local_name();
+                let name = local.as_ref();
+                if name == "a:tbl" {
+                    depth_tbl = depth_tbl.saturating_sub(1);
+                    if !seen_grid {
+                        ok = false;
+                    }
+                } else if name == "a:tblGrid" {
+                    depth_grid = depth_grid.saturating_sub(1);
+                }
+            }
+            Ok(quick_xml::events::Event::Eof) => break,
+            Err(e) => {
+                return Err(docgen_core::Error::Backend(format!("bad XML: {e}")))
+            }
+            _ => {}
+        }
+    }
+    if !ok {
+        return Err(docgen_core::Error::Backend(
+            "table without a:tblGrid (PowerPoint would strip it)".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// `(rId, target)` pairs from a .rels part.
@@ -340,6 +396,16 @@ mod tests {
         assert!(overview.contains("b=\"1\""), "bold run");
         let status = read_part(&first, "ppt/slides/slide3.xml");
         assert!(status.contains("a:tbl"), "table shape");
+        // PowerPoint strips tables whose gridCols are not wrapped in
+        // tblGrid (surfaces as its "repair" dialog) — regression guard.
+        assert!(
+            status.contains("<a:tblGrid>"),
+            "gridCols must be wrapped in a:tblGrid"
+        );
+        assert!(
+            status.matches("<a:gridCol").count() == 2,
+            "two columns in tblGrid"
+        );
 
         for part in [
             "ppt/slideMasters/slideMaster1.xml",

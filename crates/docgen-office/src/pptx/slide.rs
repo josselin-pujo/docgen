@@ -415,7 +415,11 @@ fn shape_ph(ctx: &mut Ctx, ph: &str, idx: Option<u32>, geom: Geom, text: &str, c
         "p:cNvPr",
         &[("id", &id.to_string()), ("name", &format!("Placeholder {id}"))],
     );
-    ctx.xml.empty("p:cNvSpPr", &[("txBox", "1")]);
+    // Placeholders are not text boxes: txBox="1" here is contradictory and
+    // PowerPoint flags the deck for repair.
+    ctx.xml.start("p:cNvSpPr", &[]);
+    ctx.xml.empty("a:spLocks", &[("noGrp", "1")]);
+    ctx.xml.end("p:cNvSpPr");
     ctx.xml.start("p:nvPr", &[]);
     if let Some(idx) = idx {
         ctx.xml.empty("p:ph", &[("type", ph), ("idx", &idx.to_string())]);
@@ -563,7 +567,14 @@ fn bullets_shape(ctx: &mut Ctx, skin: &Skin, geom: Geom, bullets: &[Bullet]) {
         "p:cNvPr",
         &[("id", &id.to_string()), ("name", &format!("Content {id}"))],
     );
-    ctx.xml.empty("p:cNvSpPr", &[("txBox", "1")]);
+    if skin.body_idx.is_some() {
+        // Body placeholder, not a text box (txBox would trip repair).
+        ctx.xml.start("p:cNvSpPr", &[]);
+        ctx.xml.empty("a:spLocks", &[("noGrp", "1")]);
+        ctx.xml.end("p:cNvSpPr");
+    } else {
+        ctx.xml.empty("p:cNvSpPr", &[("txBox", "1")]);
+    }
     ctx.xml.start("p:nvPr", &[]);
     if let Some(idx) = skin.body_idx {
         ctx.xml.empty("p:ph", &[("type", "body"), ("idx", &idx.to_string())]);
@@ -775,7 +786,15 @@ fn table(ctx: &mut Ctx, geom: Geom, rows: &[docgen_core::model::TableRow]) {
     ctx.xml.empty("p:cNvGraphicFramePr", &[]);
     ctx.xml.empty("p:nvPr", &[]);
     ctx.xml.end("p:nvGraphicFramePr");
-    xfrm_attrs(ctx.xml, geom);
+    // GraphicFrames carry the presentation-namespace transform (p:xfrm),
+    // unlike shapes (a:xfrm) — PowerPoint flags the deck for repair if
+    // the wrong one is used.
+    ctx.xml.start("p:xfrm", &[]);
+    ctx.xml
+        .empty("a:off", &[("x", &geom.0.to_string()), ("y", &geom.1.to_string())]);
+    ctx.xml
+        .empty("a:ext", &[("cx", &geom.2.to_string()), ("cy", &geom.3.to_string())]);
+    ctx.xml.end("p:xfrm");
     ctx.xml.start("a:graphic", &[]);
     ctx.xml.start(
         "a:graphicData",
@@ -787,9 +806,13 @@ fn table(ctx: &mut Ctx, geom: Geom, rows: &[docgen_core::model::TableRow]) {
     ctx.xml.text("{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}");
     ctx.xml.end("a:tableStyleId");
     ctx.xml.end("a:tblPr");
+    // Schema: gridCols must be wrapped in a:tblGrid (PowerPoint strips the
+    // whole table otherwise — its "repair" dialog is the symptom).
+    ctx.xml.start("a:tblGrid", &[]);
     for w in &col_w {
         ctx.xml.empty("a:gridCol", &[("w", &w.to_string())]);
     }
+    ctx.xml.end("a:tblGrid");
     let row_h = 370_840i64;
     for row in rows {
         ctx.xml.start("a:tr", &[("h", &row_h.to_string())]);
