@@ -14,3 +14,6 @@ typst-layout = "0.15.1"
 typst-assets = { version = "0.15.1", features = ["fonts"] }
 typst-render = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+sha2 = "0.10"

@@ -91,11 +91,7 @@ fn main() -> anyhow::Result<()> {
             author,
             date,
         } => diff(old, new, out, &format, &author, date),
-        Command::Diagram {
-            input,
-            out,
-            format,
-        } => diagram(input, out, &format),
+        Command::Diagram { input, out, format } => diagram(input, out, &format),
     }
 }
 
@@ -105,19 +101,16 @@ fn render(
     format: &str,
     template: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    let markdown = std::fs::read_to_string(&input)
-        .with_context(|| format!("reading {}", input.display()))?;
+    let markdown =
+        std::fs::read_to_string(&input).with_context(|| format!("reading {}", input.display()))?;
     let doc = parse_document(&markdown).context("parsing document")?;
 
     match format.to_ascii_lowercase().as_str() {
         "pdf" => {
             let excalidraw = ExcalidrawRenderer::new();
             let mermaid = MermaidRenderer::new();
-            let outcome = docgen_core::assets::render_diagrams_with(
-                &doc,
-                &[&mermaid, &excalidraw],
-            )
-            .context("rendering diagrams")?;
+            let outcome = docgen_core::assets::render_diagrams_with(&doc, &[&mermaid, &excalidraw])
+                .context("rendering diagrams")?;
             warn_skipped(&outcome.skipped);
 
             let mut renderer = TypstRenderer::new_embedded();
@@ -140,18 +133,14 @@ fn render(
             // Diagrams become PNG images inside the docx.
             let excalidraw = ExcalidrawRenderer::raster();
             let mermaid = MermaidRenderer::raster();
-            let outcome = docgen_core::assets::render_diagrams_with(
-                &doc,
-                &[&mermaid, &excalidraw],
-            )
-            .context("rendering diagrams")?;
+            let outcome = docgen_core::assets::render_diagrams_with(&doc, &[&mermaid, &excalidraw])
+                .context("rendering diagrams")?;
             warn_skipped(&outcome.skipped);
 
             let bytes = match template {
                 Some(template_path) => {
-                    let template = std::fs::read(&template_path).with_context(|| {
-                        format!("reading template {}", template_path.display())
-                    })?;
+                    let template = std::fs::read(&template_path)
+                        .with_context(|| format!("reading template {}", template_path.display()))?;
                     docgen_office::docx::fill_template(&template, &doc, &outcome.assets)
                         .context("filling docx template")?
                 }
@@ -167,18 +156,14 @@ fn render(
             // Diagrams become PNG images inside the deck.
             let excalidraw = ExcalidrawRenderer::raster();
             let mermaid = MermaidRenderer::raster();
-            let outcome = docgen_core::assets::render_diagrams_with(
-                &doc,
-                &[&mermaid, &excalidraw],
-            )
-            .context("rendering diagrams")?;
+            let outcome = docgen_core::assets::render_diagrams_with(&doc, &[&mermaid, &excalidraw])
+                .context("rendering diagrams")?;
             warn_skipped(&outcome.skipped);
 
             let bytes = match template {
                 Some(template_path) => {
-                    let template = std::fs::read(&template_path).with_context(|| {
-                        format!("reading template {}", template_path.display())
-                    })?;
+                    let template = std::fs::read(&template_path)
+                        .with_context(|| format!("reading template {}", template_path.display()))?;
                     docgen_office::pptx::fill_template(&template, &doc, &outcome.assets)
                         .context("filling pptx template")?
                 }
@@ -220,16 +205,10 @@ fn diff(
 
     let excalidraw = ExcalidrawRenderer::raster();
     let mermaid = MermaidRenderer::raster();
-    let old_outcome = docgen_core::assets::render_diagrams_with(
-        &old,
-        &[&mermaid, &excalidraw],
-    )
-    .context("rendering old diagrams")?;
-    let new_outcome = docgen_core::assets::render_diagrams_with(
-        &new,
-        &[&mermaid, &excalidraw],
-    )
-    .context("rendering new diagrams")?;
+    let old_outcome = docgen_core::assets::render_diagrams_with(&old, &[&mermaid, &excalidraw])
+        .context("rendering old diagrams")?;
+    let new_outcome = docgen_core::assets::render_diagrams_with(&new, &[&mermaid, &excalidraw])
+        .context("rendering new diagrams")?;
 
     let identity = match date {
         Some(d) => docgen_office::docx::RevisionIdentity::new(author, d),
@@ -303,15 +282,20 @@ fn detect_diagram(input: &Path, source: String) -> DiagramSource {
 }
 
 fn diagram(input: PathBuf, out: Option<PathBuf>, format: &str) -> anyhow::Result<()> {
-    let source = std::fs::read_to_string(&input)
-        .with_context(|| format!("reading {}", input.display()))?;
-    let (bytes, out) = match (detect_diagram(&input, source), format.to_ascii_lowercase().as_str())
-    {
+    let source =
+        std::fs::read_to_string(&input).with_context(|| format!("reading {}", input.display()))?;
+    let (bytes, out) = match (
+        detect_diagram(&input, source),
+        format.to_ascii_lowercase().as_str(),
+    ) {
         (DiagramSource::Mermaid(source), "svg") => {
             let svg = MermaidRenderer::new()
                 .render_svg(&source)
                 .context("mermaid render")?;
-            (svg.into_bytes(), out.unwrap_or_else(|| with_extension(&input, "svg")))
+            (
+                svg.into_bytes(),
+                out.unwrap_or_else(|| with_extension(&input, "svg")),
+            )
         }
         (DiagramSource::Mermaid(source), "png") => {
             let png = MermaidRenderer::new()
@@ -320,13 +304,14 @@ fn diagram(input: PathBuf, out: Option<PathBuf>, format: &str) -> anyhow::Result
             (png, out.unwrap_or_else(|| with_extension(&input, "png")))
         }
         (DiagramSource::Excalidraw(source), "svg") => {
-            let svg = docgen_excalidraw::render_source_svg(&source)
-                .context("excalidraw render")?;
-            (svg.into_bytes(), out.unwrap_or_else(|| with_extension(&input, "svg")))
+            let svg = docgen_excalidraw::render_source_svg(&source).context("excalidraw render")?;
+            (
+                svg.into_bytes(),
+                out.unwrap_or_else(|| with_extension(&input, "svg")),
+            )
         }
         (DiagramSource::Excalidraw(source), "png") => {
-            let png = docgen_excalidraw::render_source_png(&source)
-                .context("excalidraw render")?;
+            let png = docgen_excalidraw::render_source_png(&source).context("excalidraw render")?;
             (png, out.unwrap_or_else(|| with_extension(&input, "png")))
         }
         (_, other) => bail!("unsupported diagram format {other:?} (use svg or png)"),

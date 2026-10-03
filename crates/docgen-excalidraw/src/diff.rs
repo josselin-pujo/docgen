@@ -133,13 +133,13 @@ pub fn changed_fields(old: &Element, new: &Element) -> Vec<String> {
         .iter()
         .filter(|(k, _)| !VOLATILE.contains(&k.as_str()))
         .collect();
-    old_extra.sort_by(|a, b| a.0.cmp(&b.0));
+    old_extra.sort_by(|a, b| a.0.cmp(b.0));
     let mut new_extra: Vec<(&String, &serde_json::Value)> = new
         .extra
         .iter()
         .filter(|(k, _)| !VOLATILE.contains(&k.as_str()))
         .collect();
-    new_extra.sort_by(|a, b| a.0.cmp(&b.0));
+    new_extra.sort_by(|a, b| a.0.cmp(b.0));
     field!("metadata", old_extra, new_extra);
     out
 }
@@ -203,15 +203,11 @@ mod tests {
     fn volatile_fields_are_not_changes() {
         let old = scene(vec![el("a", "rectangle", 0.0, 0.0)]);
         let mut e = el("a", "rectangle", 0.0, 0.0);
-        e.extra.insert(
-            "version".into(),
-            serde_json::json!(2),
-        );
-        e.extra.insert(
-            "versionNonce".into(),
-            serde_json::json!(999),
-        );
-        e.extra.insert("updated".into(), serde_json::json!(1700000000));
+        e.extra.insert("version".into(), serde_json::json!(2));
+        e.extra
+            .insert("versionNonce".into(), serde_json::json!(999));
+        e.extra
+            .insert("updated".into(), serde_json::json!(1700000000));
         let new = scene(vec![e]);
         assert!(diff_scenes(&old, &new).is_empty());
     }

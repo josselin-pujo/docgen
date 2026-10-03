@@ -116,14 +116,8 @@ pub enum Inline {
     Emphasis(Vec<Inline>),
     Strikethrough(Vec<Inline>),
     Code(String),
-    Link {
-        url: String,
-        text: Vec<Inline>,
-    },
-    Image {
-        url: String,
-        alt: Vec<Inline>,
-    },
+    Link { url: String, text: Vec<Inline> },
+    Image { url: String, alt: Vec<Inline> },
     SoftBreak,
     HardBreak,
 }

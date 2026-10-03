@@ -7,10 +7,10 @@ pub(crate) mod parts;
 mod template;
 pub(crate) mod xml;
 
+use docgen_core::Result as CoreResult;
 use docgen_core::assets::AssetMap;
 use docgen_core::diff::{self, DiffOptions};
 use docgen_core::model::{Document, Frontmatter};
-use docgen_core::Result as CoreResult;
 
 use crate::{Error, Result};
 
@@ -71,11 +71,15 @@ pub fn render_diff_docx(
     identity: &RevisionIdentity,
 ) -> Result<Vec<u8>> {
     let plan = diff::plan_diff_with(old, new, &DiffOptions::default());
-    document::render(new, new_assets, Some(document::RevisionMode {
-        plan: &plan,
-        old_assets,
-        identity,
-    }))
+    document::render(
+        new,
+        new_assets,
+        Some(document::RevisionMode {
+            plan: &plan,
+            old_assets,
+            identity,
+        }),
+    )
 }
 
 /// Validates that a buffer looks like a docx we can process: a zip
@@ -93,12 +97,11 @@ mod tests {
 
     /// Minimal valid 1x1 white PNG.
     const TINY_PNG: &[u8] = &[
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49,
-        0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06,
-        0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44,
-        0x41, 0x54, 0x78, 0x9C, 0x62, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D,
-        0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42,
-        0x60, 0x82,
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x62, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
 
     fn png_asset() -> RenderedAsset {
@@ -135,8 +138,7 @@ mod tests {
         assert!(xml.contains("w:pStyle w:val=\"Heading1\""), "heading style");
         assert!(xml.contains("<w:b/>"), "bold run");
         assert!(xml.contains("T"), "title text present");
-        let mut zip =
-            zip::ZipArchive::new(std::io::Cursor::new(first.clone())).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(first.clone())).unwrap();
         for part in [
             "word/styles.xml",
             "word/numbering.xml",
@@ -164,17 +166,16 @@ mod tests {
 
     #[test]
     fn diff_docx_carries_tracked_changes() {
-        let old = parse_document(
-            "# Title {#t}\n\nHello world content.\n\n```rust\nfn a() {}\n```\n",
-        )
-        .unwrap();
+        let old =
+            parse_document("# Title {#t}\n\nHello world content.\n\n```rust\nfn a() {}\n```\n")
+                .unwrap();
         let new = parse_document(
             "# Title {#t}\n\nHello globe content.\n\n```rust\nfn a() {}\nfn b() {}\n```\n",
         )
         .unwrap();
         let identity = RevisionIdentity::new("Reviewer", "2026-10-03T10:00:00Z");
-        let bytes = render_diff_docx(&old, &new, &BTreeMap::new(), &BTreeMap::new(), &identity)
-            .unwrap();
+        let bytes =
+            render_diff_docx(&old, &new, &BTreeMap::new(), &BTreeMap::new(), &identity).unwrap();
         validate_docx(&bytes).unwrap();
 
         let xml = unzip_document(&bytes);
@@ -193,20 +194,33 @@ mod tests {
 
     #[test]
     fn diff_docx_marks_moves_and_diagrams_with_comments() {
-        let old = parse_document("# A {#a}\n\n# B {#b}\n\n```mermaid {#d}\nflowchart TD\nA-->B\n```\n").unwrap();
+        let old =
+            parse_document("# A {#a}\n\n# B {#b}\n\n```mermaid {#d}\nflowchart TD\nA-->B\n```\n")
+                .unwrap();
         // Move B before A; change the diagram source.
-        let new = parse_document("# B {#b}\n\n# A {#a}\n\n```mermaid {#d}\nflowchart TD\nA-->C\n```\n").unwrap();
+        let new =
+            parse_document("# B {#b}\n\n# A {#a}\n\n```mermaid {#d}\nflowchart TD\nA-->C\n```\n")
+                .unwrap();
         let mut old_assets = BTreeMap::new();
         old_assets.insert("d".to_string(), png_asset());
         let mut new_assets = BTreeMap::new();
         new_assets.insert("d".to_string(), png_asset());
         let identity = RevisionIdentity::new("Mover", "2026-10-03T11:00:00Z");
         let plan = docgen_core::diff::plan_diff(&old, &new);
-        assert_eq!(plan.steps.iter().filter(|s| matches!(s, docgen_core::diff::Step::Move { .. })).count(), 1);
-        assert!(plan
-            .steps
-            .iter()
-            .any(|s| matches!(s, docgen_core::diff::Step::Modify { content: docgen_core::diff::ContentChange::Source { .. }, .. })));
+        assert_eq!(
+            plan.steps
+                .iter()
+                .filter(|s| matches!(s, docgen_core::diff::Step::Move { .. }))
+                .count(),
+            1
+        );
+        assert!(plan.steps.iter().any(|s| matches!(
+            s,
+            docgen_core::diff::Step::Modify {
+                content: docgen_core::diff::ContentChange::Source { .. },
+                ..
+            }
+        )));
         let bytes = render_diff_docx(&old, &new, &old_assets, &new_assets, &identity).unwrap();
         validate_docx(&bytes).unwrap();
 
@@ -247,8 +261,14 @@ mod tests {
         assert!(xml.contains("Actual Title"), "placeholder substituted");
         assert!(xml.contains("7.2"), "version substituted");
         // Runs are word-granular, so check the fragments separately.
-        assert!(xml.contains("Body") && xml.contains("text."), "body injected");
-        assert!(xml.contains("Footer") && xml.contains("after"), "template tail preserved");
+        assert!(
+            xml.contains("Body") && xml.contains("text."),
+            "body injected"
+        );
+        assert!(
+            xml.contains("Footer") && xml.contains("after"),
+            "template tail preserved"
+        );
         assert!(!xml.contains("{{"), "no leftover markers");
     }
 

@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Tests (incl. golden hashes)
+        run: cargo test --workspace
+
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1,wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Check every library crate on both wasm targets
+        run: |
+          for target in wasm32-wasip1 wasm32-unknown-unknown; do
+            cargo check --target "$target" \
+              -p docgen-core -p docgen-mermaid -p docgen-typst \
+              -p docgen-excalidraw -p docgen-office -p docgen-wasm
+          done
+      - name: Build the cdylibs
+        run: |
+          cargo build --release --target wasm32-unknown-unknown -p docgen-wasm
+          cargo build --release --target wasm32-wasip1 -p docgen-wasm
+      - name: Import-surface assertions
+        run: cargo test -p docgen-wasm --test imports
+
+  component:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-tools
+      - name: Build the zero-import core module
+        run: cargo build --release --target wasm32-unknown-unknown -p docgen-wasm
+      - name: Componentize and validate
+        run: |
+          wasm-tools component new \
+            target/wasm32-unknown-unknown/release/docgen_wasm.wasm \
+            -o target/docgen.wasm
+          wasm-tools validate target/docgen.wasm
+          wasm-tools component wit target/docgen.wasm
+
+  fuzz:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Build fuzz targets (no run)
+        run: |
+          (cd crates/docgen-core && cargo fuzz build)
+          (cd crates/docgen-typst && cargo fuzz build)

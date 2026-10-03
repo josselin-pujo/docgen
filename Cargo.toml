@@ -18,7 +18,7 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 docgen-core = { path = "crates/docgen-core" }
 docgen-typst = { path = "crates/docgen-typst" }
-docgen-mermaid = { path = "crates/docgen-mermaid" }
+docgen-mermaid = { path = "crates/docgen-mermaid", default-features = false }
 docgen-excalidraw = { path = "crates/docgen-excalidraw" }
 docgen-office = { path = "crates/docgen-office" }
 
@@ -38,7 +38,7 @@ typst-pdf = "0.15.1"
 typst-render = "0.15.1"
 ecow = "0.2"
 
-merman = "0.8.0-alpha.7"
+merman = { version = "0.8.0-alpha.7", default-features = false }
 
 [profile.release]
 lto = "thin"

@@ -13,10 +13,10 @@ mod slide;
 mod spec;
 mod template;
 
+use docgen_core::Result as CoreResult;
 use docgen_core::assets::AssetMap;
 use docgen_core::diff::{self, DiffOptions};
 use docgen_core::model::Document;
-use docgen_core::Result as CoreResult;
 
 use crate::docx::package::Package;
 use crate::{Error, Result};
@@ -86,7 +86,10 @@ pub(crate) fn build_package(
         .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
 
     let mut pkg = Package::new();
-    pkg.add("[Content_Types].xml", content_types_xml(slides.len()).into_bytes());
+    pkg.add(
+        "[Content_Types].xml",
+        content_types_xml(slides.len()).into_bytes(),
+    );
     pkg.add("_rels/.rels", ROOT_RELS.as_bytes().to_vec());
     pkg.add(
         "docProps/core.xml",
@@ -101,17 +104,26 @@ pub(crate) fn build_package(
     pkg.add("ppt/presProps.xml", PRESPROPS_XML.as_bytes().to_vec());
     pkg.add("ppt/viewProps.xml", VIEWPROPS_XML.as_bytes().to_vec());
     pkg.add("ppt/tableStyles.xml", TABLESTYLES_XML.as_bytes().to_vec());
-    pkg.add("ppt/slideMasters/slideMaster1.xml", slide_master_xml().into_bytes());
+    pkg.add(
+        "ppt/slideMasters/slideMaster1.xml",
+        slide_master_xml().into_bytes(),
+    );
     pkg.add(
         "ppt/slideMasters/_rels/slideMaster1.xml.rels",
         MASTER_RELS.as_bytes().to_vec(),
     );
-    pkg.add("ppt/slideLayouts/slideLayout1.xml", slide_layout_title_xml().into_bytes());
+    pkg.add(
+        "ppt/slideLayouts/slideLayout1.xml",
+        slide_layout_title_xml().into_bytes(),
+    );
     pkg.add(
         "ppt/slideLayouts/_rels/slideLayout1.xml.rels",
         layout_rels().as_bytes().to_vec(),
     );
-    pkg.add("ppt/slideLayouts/slideLayout2.xml", slide_layout_content_xml().into_bytes());
+    pkg.add(
+        "ppt/slideLayouts/slideLayout2.xml",
+        slide_layout_content_xml().into_bytes(),
+    );
     pkg.add(
         "ppt/slideLayouts/_rels/slideLayout2.xml.rels",
         layout_rels().as_bytes().to_vec(),
@@ -161,7 +173,9 @@ pub fn validate_pptx(bytes: &[u8]) -> CoreResult<()> {
             .iter()
             .find(|(id, _)| *id == rid)
             .map(|(_, t)| t.clone())
-            .ok_or_else(|| docgen_core::Error::Backend(format!("slide {rid} has no relationship")))?;
+            .ok_or_else(|| {
+                docgen_core::Error::Backend(format!("slide {rid} has no relationship"))
+            })?;
         let path = format!("ppt/{target}");
         let slide_xml = read(&path)?;
         parse_xml(&slide_xml)?;
@@ -238,9 +252,7 @@ fn check_tables(slide_xml: &str) -> CoreResult<()> {
                 }
             }
             Ok(quick_xml::events::Event::Eof) => break,
-            Err(e) => {
-                return Err(docgen_core::Error::Backend(format!("bad XML: {e}")))
-            }
+            Err(e) => return Err(docgen_core::Error::Backend(format!("bad XML: {e}"))),
             _ => {}
         }
     }
@@ -254,25 +266,25 @@ fn check_tables(slide_xml: &str) -> CoreResult<()> {
 
 /// `(rId, target)` pairs from a .rels part.
 fn parse_rels(xml: &str) -> Vec<(String, String)> {
-    use quick_xml::events::Event;
     use quick_xml::Reader;
+    use quick_xml::events::Event;
     let mut reader = Reader::from_str(xml);
     let mut out = Vec::new();
     loop {
         match reader.read_event() {
-            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
-                if e.local_name().as_ref() == "Relationship" {
-                    let mut id = String::new();
-                    let mut target = String::new();
-                    for attr in e.attributes().flatten() {
-                        match attr.key.local_name().as_ref() {
-                            "Id" => id = attr.value.to_string(),
-                            "Target" => target = attr.value.to_string(),
-                            _ => {}
-                        }
+            Ok(Event::Start(e)) | Ok(Event::Empty(e))
+                if e.local_name().as_ref() == "Relationship" =>
+            {
+                let mut id = String::new();
+                let mut target = String::new();
+                for attr in e.attributes().flatten() {
+                    match attr.key.local_name().as_ref() {
+                        "Id" => id = attr.value.to_string(),
+                        "Target" => target = attr.value.to_string(),
+                        _ => {}
                     }
-                    out.push((id, target));
                 }
+                out.push((id, target));
             }
             Ok(Event::Eof) => break,
             Err(_) => break,
@@ -284,8 +296,8 @@ fn parse_rels(xml: &str) -> Vec<(String, String)> {
 
 /// r:id values referenced from `p:sldIdLst`.
 fn slide_rids(presentation: &str) -> Vec<String> {
-    use quick_xml::events::Event;
     use quick_xml::Reader;
+    use quick_xml::events::Event;
     let mut reader = Reader::from_str(presentation);
     let mut in_list = false;
     let mut out = Vec::new();
@@ -299,18 +311,14 @@ fn slide_rids(presentation: &str) -> Vec<String> {
                 } else if in_list && name == "sldId" {
                     for attr in e.attributes().flatten() {
                         // r:id (prefixed), not the numeric id attribute.
-                        if attr.key.local_name().as_ref() == "id"
-                            && attr.key.prefix().is_some()
-                        {
+                        if attr.key.local_name().as_ref() == "id" && attr.key.prefix().is_some() {
                             out.push(attr.value.to_string());
                         }
                     }
                 }
             }
-            Ok(Event::End(e)) => {
-                if e.local_name().as_ref() == "sldIdLst" {
-                    in_list = false;
-                }
+            Ok(Event::End(e)) if e.local_name().as_ref() == "sldIdLst" => {
+                in_list = false;
             }
             Ok(Event::Eof) => break,
             Err(_) => break,
@@ -345,12 +353,11 @@ mod tests {
 
     // Minimal valid 1x1 white PNG.
     const TINY_PNG: &[u8] = &[
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49,
-        0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06,
-        0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44,
-        0x41, 0x54, 0x78, 0x9C, 0x62, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D,
-        0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42,
-        0x60, 0x82,
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x62, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
 
     fn png_asset() -> RenderedAsset {
@@ -434,8 +441,7 @@ mod tests {
 
     #[test]
     fn links_become_external_rels() {
-        let doc =
-            parse_document("# T {#t}\n\n- see [docs](https://example.com/x)\n").unwrap();
+        let doc = parse_document("# T {#t}\n\n- see [docs](https://example.com/x)\n").unwrap();
         let bytes = render_pptx(&doc, &BTreeMap::new()).unwrap();
         validate_pptx(&bytes).unwrap();
         let rels = read_part(&bytes, "ppt/slides/_rels/slide1.xml.rels");
@@ -450,11 +456,12 @@ mod tests {
     #[test]
     fn diff_deck_tags_slides_and_summarizes() {
         let old = parse_document("# Title {#t}\n\nHello world.\n\n- old item\n").unwrap();
-        let new = parse_document("# Title {#t}\n\nHello globe.\n\n- old item\n\n## New {#n}\n\nstuff\n")
-            .unwrap();
+        let new =
+            parse_document("# Title {#t}\n\nHello globe.\n\n- old item\n\n## New {#n}\n\nstuff\n")
+                .unwrap();
         let identity = crate::docx::RevisionIdentity::new("Rev", "2026-10-03T10:00:00Z");
-        let bytes = render_diff_pptx(&old, &new, &BTreeMap::new(), &BTreeMap::new(), &identity)
-            .unwrap();
+        let bytes =
+            render_diff_pptx(&old, &new, &BTreeMap::new(), &BTreeMap::new(), &identity).unwrap();
         validate_pptx(&bytes).unwrap();
 
         let all_slides = (1..=6)
@@ -476,7 +483,10 @@ mod tests {
         assert!(
             slide.contains("arabicPeriod") && slide.contains("startAt"),
             "auto-numbered bullets: {}",
-            &slide[slide.find("buAutoNum").map(|i| i.saturating_sub(80)).unwrap_or(0)
+            &slide[slide
+                .find("buAutoNum")
+                .map(|i| i.saturating_sub(80))
+                .unwrap_or(0)
                 ..slide.find("buAutoNum").map(|i| i + 120).unwrap_or(100)]
         );
     }
@@ -491,8 +501,12 @@ mod tests {
         let filled = fill_template(&template, &doc, &BTreeMap::new()).unwrap();
         validate_pptx(&filled).unwrap();
 
-        let before = read_part(&template, "ppt/presentation.xml").matches("<p:sldId ").count();
-        let after = read_part(&filled, "ppt/presentation.xml").matches("<p:sldId ").count();
+        let before = read_part(&template, "ppt/presentation.xml")
+            .matches("<p:sldId ")
+            .count();
+        let after = read_part(&filled, "ppt/presentation.xml")
+            .matches("<p:sldId ")
+            .count();
         assert!(after > before, "slides appended: {before} -> {after}");
         // Original slides kept (slide1 is the template's own title slide),
         // new deck appended after them.

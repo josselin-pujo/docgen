@@ -9,9 +9,9 @@
 //!
 //! I/O belongs to `docgen-cli` (native) or a wasm bindgen shell, never here.
 
-mod error;
 pub mod assets;
 pub mod diff;
+mod error;
 pub mod frontmatter;
 pub mod ids;
 pub mod model;

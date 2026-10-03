@@ -11,8 +11,8 @@ use std::io::Read;
 
 use docgen_core::assets::AssetMap;
 use docgen_core::model::Document;
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 
 use super::slide::{Geom, MediaAlloc, Skin, emit_slide, slide_rels_xml};
 use super::spec::{SlideSpec, slides_for};
@@ -136,7 +136,11 @@ pub(crate) fn parse_template(template: &[u8]) -> Result<TemplateBase> {
     let title_idx = layouts
         .iter()
         .position(|l| l.ctr_title.is_some())
-        .or_else(|| layouts.iter().position(|l| l.title.is_some() && l.subtitle.is_some()))
+        .or_else(|| {
+            layouts
+                .iter()
+                .position(|l| l.title.is_some() && l.subtitle.is_some())
+        })
         .or_else(|| layouts.iter().position(|l| l.title.is_some()))
         .unwrap_or(0);
     let content_idx = layouts
@@ -206,16 +210,13 @@ pub(crate) fn parse_template(template: &[u8]) -> Result<TemplateBase> {
         let mut reader = Reader::from_str(&presentation);
         loop {
             match reader.read_event() {
-                Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
-                    if e.local_name().as_ref() == "sldId" {
-                        for attr in e.attributes().flatten() {
-                            if attr.key.local_name().as_ref() == "id"
-                                && attr.key.prefix().is_none()
-                            {
-                                if let Ok(n) = attr.value.parse::<u64>() {
-                                    max = max.max(n);
-                                }
-                            }
+                Ok(Event::Start(e)) | Ok(Event::Empty(e)) if e.local_name().as_ref() == "sldId" => {
+                    for attr in e.attributes().flatten() {
+                        if attr.key.local_name().as_ref() == "id"
+                            && attr.key.prefix().is_none()
+                            && let Ok(n) = attr.value.parse::<u64>()
+                        {
+                            max = max.max(n);
                         }
                     }
                 }
@@ -348,14 +349,12 @@ fn parse_layout(xml: &str, slide_w: i64, slide_h: i64) -> Layout {
                         Some("title") => out.title = Some(ph),
                         Some("ctrTitle") => out.ctr_title = Some(ph),
                         Some("subTitle") => out.subtitle = Some(ph),
-                        Some("body") | None => {
+                        Some("body") | None
                             // Unindexed phs other than title are body-like.
-                            if ph_type.as_deref() == Some("body") || ph_idx.is_some() {
-                                if out.body.is_none() {
+                            if (ph_type.as_deref() == Some("body") || ph_idx.is_some())
+                                && out.body.is_none() => {
                                     out.body = Some(ph);
                                 }
-                            }
-                        }
                         _ => {}
                     }
                 }
@@ -390,22 +389,22 @@ fn rels_of(xml: &str) -> Vec<(String, String, String)> {
     let mut reader = Reader::from_str(xml);
     loop {
         match reader.read_event() {
-            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
-                if e.local_name().as_ref() == "Relationship" {
-                    let mut id = String::new();
-                    let mut target = String::new();
-                    let mut kind = String::new();
-                    for attr in e.attributes().flatten() {
-                        match attr.key.local_name().as_ref() {
-                            "Id" => id = attr.value.to_string(),
-                            "Target" => target = attr.value.to_string(),
-                            "Type" => kind = attr.value.to_string(),
-                            _ => {}
-                        }
+            Ok(Event::Start(e)) | Ok(Event::Empty(e))
+                if e.local_name().as_ref() == "Relationship" =>
+            {
+                let mut id = String::new();
+                let mut target = String::new();
+                let mut kind = String::new();
+                for attr in e.attributes().flatten() {
+                    match attr.key.local_name().as_ref() {
+                        "Id" => id = attr.value.to_string(),
+                        "Target" => target = attr.value.to_string(),
+                        "Type" => kind = attr.value.to_string(),
+                        _ => {}
                     }
-                    let kind = kind.rsplit('/').next().unwrap_or_default().to_string();
-                    out.push((target, kind, id));
                 }
+                let kind = kind.rsplit('/').next().unwrap_or_default().to_string();
+                out.push((target, kind, id));
             }
             Ok(Event::Eof) => break,
             Err(_) => break,
@@ -475,22 +474,21 @@ fn minor_font(theme_xml: &str) -> Option<String> {
     }
 }
 
-fn slide_size(presentation: &str) -> Option<(i64, i64)> {    let mut reader = Reader::from_str(presentation);
+fn slide_size(presentation: &str) -> Option<(i64, i64)> {
+    let mut reader = Reader::from_str(presentation);
     loop {
         match reader.read_event() {
-            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
-                if e.local_name().as_ref() == "sldSz" {
-                    let mut cx = None;
-                    let mut cy = None;
-                    for attr in e.attributes().flatten() {
-                        match attr.key.local_name().as_ref() {
-                            "cx" => cx = attr.value.parse().ok(),
-                            "cy" => cy = attr.value.parse().ok(),
-                            _ => {}
-                        }
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) if e.local_name().as_ref() == "sldSz" => {
+                let mut cx = None;
+                let mut cy = None;
+                for attr in e.attributes().flatten() {
+                    match attr.key.local_name().as_ref() {
+                        "cx" => cx = attr.value.parse().ok(),
+                        "cy" => cy = attr.value.parse().ok(),
+                        _ => {}
                     }
-                    return Some((cx?, cy?));
                 }
+                return Some((cx?, cy?));
             }
             Ok(Event::Eof) => return None,
             Err(_) => return None,
@@ -609,9 +607,7 @@ fn extend_content_types(bytes: &[u8], first: usize, count: usize) -> String {
     let xml = String::from_utf8_lossy(bytes).to_string();
     let mut adds = String::new();
     if !xml.contains("Extension=\"png\"") {
-        adds.push_str(
-            "<Default Extension=\"png\" ContentType=\"image/png\"/>",
-        );
+        adds.push_str("<Default Extension=\"png\" ContentType=\"image/png\"/>");
     }
     for i in 0..count {
         adds.push_str(&format!(

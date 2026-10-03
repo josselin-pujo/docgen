@@ -3,20 +3,19 @@
 //! diagram replacements.
 
 use docgen_core::assets::AssetMap;
-use docgen_core::diff::{flatten_runs_pub, ContentChange, DiffPlan, LineOp, Run, RunOp, Step};
+use docgen_core::diff::{ContentChange, DiffPlan, LineOp, Run, RunOp, Step, flatten_runs_pub};
 use docgen_core::model::{Block, BlockKind, DiagramFormat, Document, Inline, ListItem, TableRow};
 use quick_xml::Reader;
 
-use super::package::{png_dimensions, Package};
+use super::RevisionIdentity;
+use super::package::{Package, png_dimensions};
 use super::parts;
 use super::xml::Xml;
-use super::RevisionIdentity;
 use crate::{Error, Result};
 
 /// Content width of an A4 page with 2 cm margins, in EMU (17 cm · 360000).
 const CONTENT_WIDTH_EMU: f64 = 6_120_000.0;
-const REL_TYPE: &str =
-    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
+const REL_TYPE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
 const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
 #[derive(Clone, Copy)]
@@ -282,28 +281,28 @@ impl<'a> Emitter<'a> {
     }
 
     fn comment_start(&mut self) {
-        if let Some(id) = self.pending_comment {
-            if self.in_block {
-                self.xml
-                    .empty("w:commentRangeStart", &[("w:id", &id.to_string())]);
-            }
+        if let Some(id) = self.pending_comment
+            && self.in_block
+        {
+            self.xml
+                .empty("w:commentRangeStart", &[("w:id", &id.to_string())]);
         }
     }
 
     fn comment_end(&mut self) {
-        if let Some(id) = self.pending_comment.take() {
-            if self.in_block {
-                self.in_block = false;
-                self.xml
-                    .empty("w:commentRangeEnd", &[("w:id", &id.to_string())]);
-                self.xml.start("w:r", &[]);
-                self.xml.start("w:rPr", &[]);
-                self.xml.empty("w:rStyle", &[("w:val", "CommentReference")]);
-                self.xml.end("w:rPr");
-                self.xml
-                    .empty("w:commentReference", &[("w:id", &id.to_string())]);
-                self.xml.end("w:r");
-            }
+        if let Some(id) = self.pending_comment.take()
+            && self.in_block
+        {
+            self.in_block = false;
+            self.xml
+                .empty("w:commentRangeEnd", &[("w:id", &id.to_string())]);
+            self.xml.start("w:r", &[]);
+            self.xml.start("w:rPr", &[]);
+            self.xml.empty("w:rStyle", &[("w:val", "CommentReference")]);
+            self.xml.end("w:rPr");
+            self.xml
+                .empty("w:commentReference", &[("w:id", &id.to_string())]);
+            self.xml.end("w:r");
         }
     }
 
@@ -323,25 +322,25 @@ impl<'a> Emitter<'a> {
                     "SourceCode" => {
                         self.xml.empty(
                             "w:shd",
-                            &[("w:val", "clear"), ("w:color", "auto"), ("w:fill", "F2F2F2")],
+                            &[
+                                ("w:val", "clear"),
+                                ("w:color", "auto"),
+                                ("w:fill", "F2F2F2"),
+                            ],
                         );
-                        self.xml
-                            .empty("w:ind", &[("w:left", "284")]);
+                        self.xml.empty("w:ind", &[("w:left", "284")]);
                     }
                     "Quote" => {
                         self.xml.empty("w:ind", &[("w:left", "567")]);
                     }
                     "Heading1" => {
-                        self.xml
-                            .empty("w:spacing", &[("w:before", "320")]);
+                        self.xml.empty("w:spacing", &[("w:before", "320")]);
                     }
                     "Heading2" => {
-                        self.xml
-                            .empty("w:spacing", &[("w:before", "240")]);
+                        self.xml.empty("w:spacing", &[("w:before", "240")]);
                     }
                     "Heading3" => {
-                        self.xml
-                            .empty("w:spacing", &[("w:before", "200")]);
+                        self.xml.empty("w:spacing", &[("w:before", "200")]);
                     }
                     _ => {}
                 }
@@ -384,8 +383,10 @@ impl<'a> Emitter<'a> {
             self.xml.empty("w:strike", &[]);
         }
         if mono {
-            self.xml
-                .empty("w:rFonts", &[("w:ascii", "Consolas"), ("w:hAnsi", "Consolas")]);
+            self.xml.empty(
+                "w:rFonts",
+                &[("w:ascii", "Consolas"), ("w:hAnsi", "Consolas")],
+            );
         }
         if let Some(size) = props.size {
             self.xml.empty("w:sz", &[("w:val", &size.to_string())]);
@@ -416,12 +417,7 @@ impl<'a> Emitter<'a> {
         }
     }
 
-    fn write_paragraph(
-        &mut self,
-        inline: &[Inline],
-        style: Option<&str>,
-        mark: Mark,
-    ) {
+    fn write_paragraph(&mut self, inline: &[Inline], style: Option<&str>, mark: Mark) {
         self.paragraph_open(style, mark, false);
         self.write_runs(inline, mark);
         self.paragraph_close();
@@ -460,7 +456,8 @@ impl<'a> Emitter<'a> {
         }
     }
 
-    pub(crate) fn write_block(&mut self, block: &Block, mark: Mark, assets: &AssetMap) {        self.in_block = true;
+    pub(crate) fn write_block(&mut self, block: &Block, mark: Mark, assets: &AssetMap) {
+        self.in_block = true;
         match &block.kind {
             BlockKind::Heading { level, inline } => {
                 let style = format!("Heading{}", (*level).clamp(1, 6));
@@ -495,7 +492,12 @@ impl<'a> Emitter<'a> {
                 self.xml.start("w:pBdr", &[]);
                 self.xml.empty(
                     "w:bottom",
-                    &[("w:val", "single"), ("w:sz", "6"), ("w:space", "1"), ("w:color", "BFBFBF")],
+                    &[
+                        ("w:val", "single"),
+                        ("w:sz", "6"),
+                        ("w:space", "1"),
+                        ("w:color", "BFBFBF"),
+                    ],
                 );
                 self.xml.end("w:pBdr");
                 self.xml.end("w:pPr");
@@ -520,7 +522,11 @@ impl<'a> Emitter<'a> {
             self.write_run(
                 &Run {
                     code: true,
-                    text: if line.is_empty() { " ".to_string() } else { (*line).to_string() },
+                    text: if line.is_empty() {
+                        " ".to_string()
+                    } else {
+                        (*line).to_string()
+                    },
                     ..Default::default()
                 },
                 mark,
@@ -565,20 +571,31 @@ impl<'a> Emitter<'a> {
         self.xml.start("w:drawing", &[]);
         self.xml.start(
             "wp:inline",
-            &[("distT", "0"), ("distB", "0"), ("distL", "0"), ("distR", "0")],
+            &[
+                ("distT", "0"),
+                ("distB", "0"),
+                ("distL", "0"),
+                ("distR", "0"),
+            ],
         );
         self.xml.empty("wp:extent", &[("cx", &cx), ("cy", &cy)]);
-        self.xml
-            .empty("wp:effectExtent", &[("l", "0"), ("t", "0"), ("r", "0"), ("b", "0")]);
+        self.xml.empty(
+            "wp:effectExtent",
+            &[("l", "0"), ("t", "0"), ("r", "0"), ("b", "0")],
+        );
         self.xml
             .empty("wp:docPr", &[("id", &docpr_id), ("name", &name)]);
         self.xml.start("wp:cNvGraphicFramePr", &[]);
-        self.xml.empty("a:graphicFrameLocks", &[("noChangeAspect", "1")]);
+        self.xml
+            .empty("a:graphicFrameLocks", &[("noChangeAspect", "1")]);
         self.xml.end("wp:cNvGraphicFramePr");
         self.xml.start("a:graphic", &[]);
         self.xml.start(
             "a:graphicData",
-            &[("uri", "http://schemas.openxmlformats.org/drawingml/2006/picture")],
+            &[(
+                "uri",
+                "http://schemas.openxmlformats.org/drawingml/2006/picture",
+            )],
         );
         self.xml.start("pic:pic", &[]);
         self.xml.start("pic:nvPicPr", &[]);
@@ -665,12 +682,18 @@ impl<'a> Emitter<'a> {
     fn table_open(&mut self, cols: usize) {
         self.xml.start("w:tbl", &[]);
         self.xml.start("w:tblPr", &[]);
-        self.xml.empty("w:tblW", &[("w:w", "5000"), ("w:type", "pct")]);
+        self.xml
+            .empty("w:tblW", &[("w:w", "5000"), ("w:type", "pct")]);
         self.xml.start("w:tblBorders", &[]);
         for side in ["top", "left", "bottom", "right", "insideH", "insideV"] {
             self.xml.empty(
                 &format!("w:{side}"),
-                &[("w:val", "single"), ("w:sz", "4"), ("w:space", "0"), ("w:color", "A6A6A6")],
+                &[
+                    ("w:val", "single"),
+                    ("w:sz", "4"),
+                    ("w:space", "0"),
+                    ("w:color", "A6A6A6"),
+                ],
             );
         }
         self.xml.end("w:tblBorders");
@@ -698,7 +721,11 @@ impl<'a> Emitter<'a> {
             if header {
                 self.xml.empty(
                     "w:shd",
-                    &[("w:val", "clear"), ("w:color", "auto"), ("w:fill", "D9E2F3")],
+                    &[
+                        ("w:val", "clear"),
+                        ("w:color", "auto"),
+                        ("w:fill", "D9E2F3"),
+                    ],
                 );
             }
             self.xml.end("w:tcPr");
@@ -791,7 +818,11 @@ impl<'a> Emitter<'a> {
                     self.write_run(
                         &Run {
                             code: true,
-                            text: if text.is_empty() { " ".to_string() } else { text.to_string() },
+                            text: if text.is_empty() {
+                                " ".to_string()
+                            } else {
+                                text.to_string()
+                            },
                             ..Default::default()
                         },
                         mark,
@@ -836,11 +867,7 @@ impl<'a> Emitter<'a> {
                     BlockKind::Table { rows } => rows.clone(),
                     _ => Vec::new(),
                 };
-                let cols = old_rows
-                    .first()
-                    .map(|r| r.cells.len())
-                    .unwrap_or(1)
-                    .max(1);
+                let cols = old_rows.first().map(|r| r.cells.len()).unwrap_or(1).max(1);
                 self.table_open(cols);
                 let mut old_iter = old_rows.iter();
                 for op in ops {
@@ -880,7 +907,8 @@ impl<'a> Emitter<'a> {
                 let comment = match format {
                     DiagramFormat::Excalidraw => {
                         // Element-level summary for externally-edited scenes.
-                        let detail = match (
+
+                        match (
                             docgen_excalidraw::parse_scene(old_src),
                             docgen_excalidraw::parse_scene(new_src),
                         ) {
@@ -909,8 +937,7 @@ impl<'a> Emitter<'a> {
                                 }
                             }
                             _ => "Excalidraw scene updated (source changed).".to_string(),
-                        };
-                        detail
+                        }
                     }
                     DiagramFormat::Mermaid => {
                         "Diagram updated: replaced render; review the change.".to_string()
@@ -922,7 +949,10 @@ impl<'a> Emitter<'a> {
                     self.write_diagram(&old.id, Mark::Delete, old_assets);
                 } else if let BlockKind::Diagram { source, .. } = &old.kind {
                     self.write_paragraph(
-                        &[Inline::Text(format!("[diagram removed: {}]", truncate(source, 80)))],
+                        &[Inline::Text(format!(
+                            "[diagram removed: {}]",
+                            truncate(source, 80)
+                        ))],
                         Some("Quote"),
                         Mark::Delete,
                     );
@@ -931,7 +961,10 @@ impl<'a> Emitter<'a> {
                     self.write_diagram(&new.id, Mark::Insert, new_assets);
                 } else if let BlockKind::Diagram { source, .. } = &new.kind {
                     self.write_paragraph(
-                        &[Inline::Text(format!("[updated diagram: {}]", truncate(source, 80)))],
+                        &[Inline::Text(format!(
+                            "[updated diagram: {}]",
+                            truncate(source, 80)
+                        ))],
                         Some("Quote"),
                         Mark::Insert,
                     );
@@ -964,7 +997,15 @@ fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        format!("{}…", &s[..s.char_indices().take(max).last().map(|(i, c)| i + c.len_utf8()).unwrap_or(max)])
+        format!(
+            "{}…",
+            &s[..s
+                .char_indices()
+                .take(max)
+                .last()
+                .map(|(i, c)| i + c.len_utf8())
+                .unwrap_or(max)]
+        )
     }
 }
 
@@ -1092,18 +1133,41 @@ fn assemble(
 <Default Extension="xml" ContentType="application/xml"/>"#,
     );
     if !media.files.is_empty() {
-        content_types
-            .push_str("\n<Default Extension=\"png\" ContentType=\"image/png\"/>");
+        content_types.push_str("\n<Default Extension=\"png\" ContentType=\"image/png\"/>");
     }
     let overrides: [(&str, &str); 8] = [
-        ("/word/document.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"),
-        ("/word/styles.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"),
-        ("/word/numbering.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"),
-        ("/word/settings.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"),
-        ("/word/fontTable.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml"),
-        ("/word/theme/theme1.xml", "application/vnd.openxmlformats-officedocument.theme+xml"),
-        ("/docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml"),
-        ("/docProps/app.xml", "application/vnd.openxmlformats-officedocument.extended-properties+xml"),
+        (
+            "/word/document.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+        ),
+        (
+            "/word/styles.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        ),
+        (
+            "/word/numbering.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+        ),
+        (
+            "/word/settings.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml",
+        ),
+        (
+            "/word/fontTable.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml",
+        ),
+        (
+            "/word/theme/theme1.xml",
+            "application/vnd.openxmlformats-officedocument.theme+xml",
+        ),
+        (
+            "/docProps/core.xml",
+            "application/vnd.openxmlformats-package.core-properties+xml",
+        ),
+        (
+            "/docProps/app.xml",
+            "application/vnd.openxmlformats-officedocument.extended-properties+xml",
+        ),
     ];
     for (part, ctype) in overrides {
         content_types.push_str(&format!(
@@ -1149,10 +1213,19 @@ fn assemble(
     package.add("word/document.xml", doc_xml);
     package.add("word/_rels/document.xml.rels", document_rels.into_bytes());
     package.add("word/styles.xml", parts::STYLES_XML.as_bytes().to_vec());
-    package.add("word/numbering.xml", parts::NUMBERING_XML.as_bytes().to_vec());
+    package.add(
+        "word/numbering.xml",
+        parts::NUMBERING_XML.as_bytes().to_vec(),
+    );
     package.add("word/settings.xml", parts::SETTINGS_XML.as_bytes().to_vec());
-    package.add("word/fontTable.xml", parts::FONTTABLE_XML.as_bytes().to_vec());
-    package.add("word/theme/theme1.xml", parts::THEME_XML.as_bytes().to_vec());
+    package.add(
+        "word/fontTable.xml",
+        parts::FONTTABLE_XML.as_bytes().to_vec(),
+    );
+    package.add(
+        "word/theme/theme1.xml",
+        parts::THEME_XML.as_bytes().to_vec(),
+    );
     if let Some(comments) = comments_xml {
         package.add("word/comments.xml", comments.into_bytes());
     }
@@ -1184,7 +1257,7 @@ pub(crate) fn validate(bytes: &[u8]) -> docgen_core::Result<()> {
             Err(e) => {
                 return Err(docgen_core::Error::Backend(format!(
                     "document.xml is not well-formed XML: {e}"
-                )))
+                )));
             }
         }
     }

@@ -9,8 +9,8 @@
 use docgen_core::assets::{AssetFormat, AssetMap};
 use docgen_core::model::Inline;
 
-use super::spec::{Bullet, Elem, SlideKind, SlideSpec};
 use super::Error;
+use super::spec::{Bullet, Elem, SlideKind, SlideSpec};
 use crate::docx::package::png_dimensions;
 use crate::docx::xml::Xml;
 
@@ -114,7 +114,11 @@ pub(crate) fn slide_rels_xml(layout_target: &str, rels: &[Rel]) -> String {
     out.push_str("\"/>\n");
     for (i, rel) in rels.iter().enumerate() {
         let kind = if rel.external { "hyperlink" } else { "image" };
-        let mode = if rel.external { " TargetMode=\"External\"" } else { "" };
+        let mode = if rel.external {
+            " TargetMode=\"External\""
+        } else {
+            ""
+        };
         out.push_str(&format!(
             "  <Relationship Id=\"rId{rid}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}\" Target=\"{target}\"{mode}/>\n",
             rid = i + 2,
@@ -246,96 +250,117 @@ pub(crate) fn emit_slide(
         };
 
         ctx.xml.start(
-        "p:sld",
-        &[
-            ("xmlns:a", "http://schemas.openxmlformats.org/drawingml/2006/main"),
-            ("xmlns:r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships"),
-            ("xmlns:p", "http://schemas.openxmlformats.org/presentationml/2006/main"),
-        ],
-    );
-    ctx.xml.start("p:cSld", &[]);
-    ctx.xml.start("p:spTree", &[]);
-    ctx.xml.start("p:nvGrpSpPr", &[]);
-    ctx.xml.empty("p:cNvPr", &[("id", "1"), ("name", "")]);
-    ctx.xml.empty("p:cNvGrpSpPr", &[]);
-    ctx.xml.empty("p:nvPr", &[]);
-    ctx.xml.end("p:nvGrpSpPr");
-    ctx.xml.start("p:grpSpPr", &[]);
-    ctx.xml.start("a:xfrm", &[]);
-    ctx.xml.empty("a:off", &[("x", "0"), ("y", "0")]);
-    ctx.xml.empty("a:ext", &[("cx", "0"), ("cy", "0")]);
-    ctx.xml.empty("a:chOff", &[("x", "0"), ("y", "0")]);
-    ctx.xml.empty("a:chExt", &[("cx", "0"), ("cy", "0")]);
-    ctx.xml.end("a:xfrm");
-    ctx.xml.end("p:grpSpPr");
+            "p:sld",
+            &[
+                (
+                    "xmlns:a",
+                    "http://schemas.openxmlformats.org/drawingml/2006/main",
+                ),
+                (
+                    "xmlns:r",
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+                ),
+                (
+                    "xmlns:p",
+                    "http://schemas.openxmlformats.org/presentationml/2006/main",
+                ),
+            ],
+        );
+        ctx.xml.start("p:cSld", &[]);
+        ctx.xml.start("p:spTree", &[]);
+        ctx.xml.start("p:nvGrpSpPr", &[]);
+        ctx.xml.empty("p:cNvPr", &[("id", "1"), ("name", "")]);
+        ctx.xml.empty("p:cNvGrpSpPr", &[]);
+        ctx.xml.empty("p:nvPr", &[]);
+        ctx.xml.end("p:nvGrpSpPr");
+        ctx.xml.start("p:grpSpPr", &[]);
+        ctx.xml.start("a:xfrm", &[]);
+        ctx.xml.empty("a:off", &[("x", "0"), ("y", "0")]);
+        ctx.xml.empty("a:ext", &[("cx", "0"), ("cy", "0")]);
+        ctx.xml.empty("a:chOff", &[("x", "0"), ("y", "0")]);
+        ctx.xml.empty("a:chExt", &[("cx", "0"), ("cy", "0")]);
+        ctx.xml.end("a:xfrm");
+        ctx.xml.end("p:grpSpPr");
 
-    match spec.kind {
-        SlideKind::Title => {
-            let text = spec.title.clone().unwrap_or_default();
-            shape_ph(&mut ctx, "ctrTitle", None, skin.ctr_title_geom, &text, true);
-            if let Some(sub) = &spec.subtitle {
-                shape_ph(&mut ctx, "subTitle", Some(1), skin.subtitle_geom, sub, true);
-            }
-            if let Some(bye) = &spec.byline {
-                textbox(
-                    &mut ctx,
-                    super::parts::META_GEOM,
-                    &[PRun::text(bye)],
-                    Some(1300),
-                    "737373",
-                    false,
-                    false,
-                );
-            }
-        }
-        SlideKind::Content => {
-            if let Some(title) = &spec.title {
-                shape_ph(&mut ctx, "title", None, skin.title_geom, title, false);
-            }
-            if let Some(tag) = spec.tag {
-                tag_chip(&mut ctx, tag);
-            }
-            let has_lead = spec
-                .elems
-                .iter()
-                .any(|e| matches!(e, Elem::Lead(_) | Elem::Quote(_)));
-            let mut bullet_area = skin.body_geom;
-            if has_lead {
-                bullet_area.1 += 1_000_000;
-                bullet_area.3 = bullet_area.3.saturating_sub(1_000_000);
-            }
-            for elem in &spec.elems {
-                match elem {
-                    Elem::Lead(inline) => textbox(
+        match spec.kind {
+            SlideKind::Title => {
+                let text = spec.title.clone().unwrap_or_default();
+                shape_ph(&mut ctx, "ctrTitle", None, skin.ctr_title_geom, &text, true);
+                if let Some(sub) = &spec.subtitle {
+                    shape_ph(&mut ctx, "subTitle", Some(1), skin.subtitle_geom, sub, true);
+                }
+                if let Some(bye) = &spec.byline {
+                    textbox(
                         &mut ctx,
-                        (skin.body_geom.0, skin.body_geom.1, skin.body_geom.2, 914_400),
-                        &flatten(inline),
-                        Some(1700),
-                        "404040",
+                        super::parts::META_GEOM,
+                        &[PRun::text(bye)],
+                        Some(1300),
+                        "737373",
                         false,
                         false,
-                    ),
-                    Elem::Quote(inline) => textbox(
-                        &mut ctx,
-                        (skin.body_geom.0, skin.body_geom.1, skin.body_geom.2, 914_400),
-                        &flatten(inline),
-                        Some(1700),
-                        "595959",
-                        true,
-                        false,
-                    ),
-                    Elem::Bullets(bullets) => bullets_shape(&mut ctx, skin, bullet_area, bullets),
-                    Elem::Table(rows) => table(&mut ctx, bullet_area, rows),
-                    Elem::Picture { block_id, alt } => {
-                        picture(&mut ctx, bullet_area, block_id, alt, assets, media)?
-                    }
-                    Elem::Code { language, code } => {
-                        code_box(&mut ctx, bullet_area, language.as_deref(), code)
+                    );
+                }
+            }
+            SlideKind::Content => {
+                if let Some(title) = &spec.title {
+                    shape_ph(&mut ctx, "title", None, skin.title_geom, title, false);
+                }
+                if let Some(tag) = spec.tag {
+                    tag_chip(&mut ctx, tag);
+                }
+                let has_lead = spec
+                    .elems
+                    .iter()
+                    .any(|e| matches!(e, Elem::Lead(_) | Elem::Quote(_)));
+                let mut bullet_area = skin.body_geom;
+                if has_lead {
+                    bullet_area.1 += 1_000_000;
+                    bullet_area.3 = bullet_area.3.saturating_sub(1_000_000);
+                }
+                for elem in &spec.elems {
+                    match elem {
+                        Elem::Lead(inline) => textbox(
+                            &mut ctx,
+                            (
+                                skin.body_geom.0,
+                                skin.body_geom.1,
+                                skin.body_geom.2,
+                                914_400,
+                            ),
+                            &flatten(inline),
+                            Some(1700),
+                            "404040",
+                            false,
+                            false,
+                        ),
+                        Elem::Quote(inline) => textbox(
+                            &mut ctx,
+                            (
+                                skin.body_geom.0,
+                                skin.body_geom.1,
+                                skin.body_geom.2,
+                                914_400,
+                            ),
+                            &flatten(inline),
+                            Some(1700),
+                            "595959",
+                            true,
+                            false,
+                        ),
+                        Elem::Bullets(bullets) => {
+                            bullets_shape(&mut ctx, skin, bullet_area, bullets)
+                        }
+                        Elem::Table(rows) => table(&mut ctx, bullet_area, rows),
+                        Elem::Picture { block_id, alt } => {
+                            picture(&mut ctx, bullet_area, block_id, alt, assets, media)?
+                        }
+                        Elem::Code { language, code } => {
+                            code_box(&mut ctx, bullet_area, language.as_deref(), code)
+                        }
                     }
                 }
             }
         }
-    }
 
         ctx.xml.end("p:spTree");
         ctx.xml.end("p:cSld");
@@ -413,7 +438,10 @@ fn shape_ph(ctx: &mut Ctx, ph: &str, idx: Option<u32>, geom: Geom, text: &str, c
     ctx.xml.start("p:nvSpPr", &[]);
     ctx.xml.empty(
         "p:cNvPr",
-        &[("id", &id.to_string()), ("name", &format!("Placeholder {id}"))],
+        &[
+            ("id", &id.to_string()),
+            ("name", &format!("Placeholder {id}")),
+        ],
     );
     // Placeholders are not text boxes: txBox="1" here is contradictory and
     // PowerPoint flags the deck for repair.
@@ -422,7 +450,8 @@ fn shape_ph(ctx: &mut Ctx, ph: &str, idx: Option<u32>, geom: Geom, text: &str, c
     ctx.xml.end("p:cNvSpPr");
     ctx.xml.start("p:nvPr", &[]);
     if let Some(idx) = idx {
-        ctx.xml.empty("p:ph", &[("type", ph), ("idx", &idx.to_string())]);
+        ctx.xml
+            .empty("p:ph", &[("type", ph), ("idx", &idx.to_string())]);
     } else {
         ctx.xml.empty("p:ph", &[("type", ph)]);
     }
@@ -445,13 +474,7 @@ fn shape_ph(ctx: &mut Ctx, ph: &str, idx: Option<u32>, geom: Geom, text: &str, c
         ctx.xml.empty("a:endParaRPr", &[("lang", "en-US")]);
         ctx.xml.end("a:p");
     } else {
-        write_para(
-            ctx,
-            &[],
-            None,
-            &[PRun::text(text)],
-            ParaOpts::default(),
-        );
+        write_para(ctx, &[], None, &[PRun::text(text)], ParaOpts::default());
     }
     ctx.xml.end("p:txBody");
     ctx.xml.end("p:sp");
@@ -483,7 +506,8 @@ fn textbox(
     ctx.xml.end("p:spPr");
     ctx.xml.start("p:txBody", &[]);
     let anchor = if centered { "ctr" } else { "t" };
-    ctx.xml.empty("a:bodyPr", &[("wrap", "square"), ("anchor", anchor)]);
+    ctx.xml
+        .empty("a:bodyPr", &[("wrap", "square"), ("anchor", anchor)]);
     ctx.xml.start("a:lstStyle", &[]);
     ctx.xml.end("a:lstStyle");
     if pruns.is_empty() {
@@ -521,8 +545,10 @@ fn tag_chip(ctx: &mut Ctx, tag: &str) {
     let id_s = id.to_string();
     ctx.xml.start("p:sp", &[]);
     ctx.xml.start("p:nvSpPr", &[]);
-    ctx.xml
-        .empty("p:cNvPr", &[("id", id_s.as_str()), ("name", "Revision tag")]);
+    ctx.xml.empty(
+        "p:cNvPr",
+        &[("id", id_s.as_str()), ("name", "Revision tag")],
+    );
     ctx.xml.empty("p:cNvSpPr", &[("txBox", "1")]);
     ctx.xml.empty("p:nvPr", &[]);
     ctx.xml.end("p:nvSpPr");
@@ -531,7 +557,8 @@ fn tag_chip(ctx: &mut Ctx, tag: &str) {
     rect_geom(ctx.xml);
     ctx.xml.end("p:spPr");
     ctx.xml.start("p:txBody", &[]);
-    ctx.xml.empty("a:bodyPr", &[("wrap", "square"), ("anchor", "ctr")]);
+    ctx.xml
+        .empty("a:bodyPr", &[("wrap", "square"), ("anchor", "ctr")]);
     ctx.xml.start("a:lstStyle", &[]);
     ctx.xml.end("a:lstStyle");
     write_para(
@@ -577,7 +604,8 @@ fn bullets_shape(ctx: &mut Ctx, skin: &Skin, geom: Geom, bullets: &[Bullet]) {
     }
     ctx.xml.start("p:nvPr", &[]);
     if let Some(idx) = skin.body_idx {
-        ctx.xml.empty("p:ph", &[("type", "body"), ("idx", &idx.to_string())]);
+        ctx.xml
+            .empty("p:ph", &[("type", "body"), ("idx", &idx.to_string())]);
     }
     ctx.xml.end("p:nvPr");
     ctx.xml.end("p:nvSpPr");
@@ -669,18 +697,22 @@ fn write_para(
     ctx.xml.start("a:pPr", &borrowed);
     match children {
         Some(PprChildren::NoBullet) => {
-            ctx.xml.start("a:buFont", &[("typeface", "Arial"), ("charset", "0")]);
+            ctx.xml
+                .start("a:buFont", &[("typeface", "Arial"), ("charset", "0")]);
             ctx.xml.end("a:buFont");
             ctx.xml.empty("a:buNone", &[]);
         }
         Some(PprChildren::Bullet(level)) => {
-            ctx.xml.start("a:buFont", &[("typeface", "Arial"), ("charset", "0")]);
+            ctx.xml
+                .start("a:buFont", &[("typeface", "Arial"), ("charset", "0")]);
             ctx.xml.end("a:buFont");
             ctx.xml.empty("a:buChar", &[("char", bullet_char(level))]);
         }
         Some(PprChildren::AutoNum(start)) => {
-            ctx.xml
-                .empty("a:buAutoNum", &[("type", "arabicPeriod"), ("startAt", &start.to_string())]);
+            ctx.xml.empty(
+                "a:buAutoNum",
+                &[("type", "arabicPeriod"), ("startAt", &start.to_string())],
+            );
         }
         None => {}
     }
@@ -711,10 +743,8 @@ fn write_runs(ctx: &mut Ctx, pruns: &[PRun], opts: &ParaOpts) {
         ctx.xml.start("a:r", &[]);
         // bold/italic/strike are ATTRIBUTES of a:rPr; solidFill/latin/
         // hlinkClick are children in that schema order.
-        let mut attrs: Vec<(&str, String)> = vec![
-            ("lang", "en-US".to_string()),
-            ("dirty", "0".to_string()),
-        ];
+        let mut attrs: Vec<(&str, String)> =
+            vec![("lang", "en-US".to_string()), ("dirty", "0".to_string())];
         if let Some(sz) = opts.size {
             attrs.push(("sz", sz.to_string()));
         }
@@ -790,18 +820,26 @@ fn table(ctx: &mut Ctx, geom: Geom, rows: &[docgen_core::model::TableRow]) {
     // unlike shapes (a:xfrm) — PowerPoint flags the deck for repair if
     // the wrong one is used.
     ctx.xml.start("p:xfrm", &[]);
-    ctx.xml
-        .empty("a:off", &[("x", &geom.0.to_string()), ("y", &geom.1.to_string())]);
-    ctx.xml
-        .empty("a:ext", &[("cx", &geom.2.to_string()), ("cy", &geom.3.to_string())]);
+    ctx.xml.empty(
+        "a:off",
+        &[("x", &geom.0.to_string()), ("y", &geom.1.to_string())],
+    );
+    ctx.xml.empty(
+        "a:ext",
+        &[("cx", &geom.2.to_string()), ("cy", &geom.3.to_string())],
+    );
     ctx.xml.end("p:xfrm");
     ctx.xml.start("a:graphic", &[]);
     ctx.xml.start(
         "a:graphicData",
-        &[("uri", "http://schemas.openxmlformats.org/drawingml/2006/table")],
+        &[(
+            "uri",
+            "http://schemas.openxmlformats.org/drawingml/2006/table",
+        )],
     );
     ctx.xml.start("a:tbl", &[]);
-    ctx.xml.start("a:tblPr", &[("firstRow", "1"), ("bandRow", "1")]);
+    ctx.xml
+        .start("a:tblPr", &[("firstRow", "1"), ("bandRow", "1")]);
     ctx.xml.start("a:tableStyleId", &[]);
     ctx.xml.text("{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}");
     ctx.xml.end("a:tableStyleId");
@@ -881,7 +919,10 @@ fn picture(
     assets: &AssetMap,
     media: &mut MediaAlloc,
 ) -> Result<(), Error> {
-    let Some(asset) = assets.get(block_id).filter(|a| a.format == AssetFormat::Png) else {
+    let Some(asset) = assets
+        .get(block_id)
+        .filter(|a| a.format == AssetFormat::Png)
+    else {
         textbox(
             ctx,
             geom,
@@ -926,7 +967,8 @@ fn picture(
     ctx.xml.empty("p:nvPr", &[]);
     ctx.xml.end("p:nvPicPr");
     ctx.xml.start("p:blipFill", &[]);
-    ctx.xml.empty("a:blip", &[("r:embed", &format!("rId{rid}"))]);
+    ctx.xml
+        .empty("a:blip", &[("r:embed", &format!("rId{rid}"))]);
     ctx.xml.start("a:stretch", &[]);
     ctx.xml.empty("a:fillRect", &[]);
     ctx.xml.end("a:stretch");

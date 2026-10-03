@@ -9,9 +9,9 @@ use std::fmt::Write as _;
 use roughr::core::{FillStyle, Options, OptionsBuilder};
 use roughr::generator::Generator;
 
+use crate::Result;
 use crate::fonts::Fonts;
 use crate::model::{Binding, Element, Scene};
-use crate::Result;
 
 const PAD: f64 = 8.0;
 
@@ -98,7 +98,13 @@ fn render_element(
             let _ = write!(open, r#" opacity="{:.3}""#, opacity);
         }
         if rotated {
-            let _ = write!(open, r#" transform="rotate({:.2} {:.2} {:.2})""#, el.angle.to_degrees(), cx, cy);
+            let _ = write!(
+                open,
+                r#" transform="rotate({:.2} {:.2} {:.2})""#,
+                el.angle.to_degrees(),
+                cx,
+                cy
+            );
         }
         let _ = writeln!(svg, "<g{open}>");
     }
@@ -165,10 +171,9 @@ fn render_element(
                 }
                 let _ = writeln!(
                     svg,
-                    r#"<path d="{d}" fill="none" stroke="{}" stroke-width="{:.2}" stroke-linecap="round" stroke-linejoin="round"{} stroke-dasharray="{}"/>"#,
+                    r#"<path d="{d}" fill="none" stroke="{}" stroke-width="{:.2}" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="{}"/>"#,
                     esc_color(&el.stroke_color),
                     el.stroke_width,
-                    "",
                     dash(&el.stroke_style, el.stroke_width)
                 );
             }
@@ -226,19 +231,19 @@ fn render_element(
             }
         }
         "image" => {
-            if let Some(file_id) = &el.file_id {
-                if let Some(file) = scene.files.get(file_id) {
-                    let _ = writeln!(
-                        svg,
-                        r#"<image x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" href="{}" xlink:href="{}" preserveAspectRatio="none"/>"#,
-                        el.x,
-                        el.y,
-                        el.width,
-                        el.height,
-                        esc_color(&file.data_url),
-                        esc_color(&file.data_url)
-                    );
-                }
+            if let Some(file_id) = &el.file_id
+                && let Some(file) = scene.files.get(file_id)
+            {
+                let _ = writeln!(
+                    svg,
+                    r#"<image x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" href="{}" xlink:href="{}" preserveAspectRatio="none"/>"#,
+                    el.x,
+                    el.y,
+                    el.width,
+                    el.height,
+                    esc_color(&file.data_url),
+                    esc_color(&file.data_url)
+                );
             }
         }
         _ => {}
@@ -283,20 +288,20 @@ fn anchored_points(el: &Element, scene: &Scene) -> Vec<(f64, f64)> {
         return pts;
     }
     if pts.len() >= 2 {
-        if let Some(b) = &el.end_binding {
-            if let Some(target) = scene.elements.iter().find(|e| e.id == b.element_id) {
-                let prev = pts[pts.len() - 2];
-                let last = *pts.last().unwrap();
-                let anchored = bind_point(b, target, last, prev);
-                *pts.last_mut().unwrap() = anchored;
-            }
+        if let Some(b) = &el.end_binding
+            && let Some(target) = scene.elements.iter().find(|e| e.id == b.element_id)
+        {
+            let prev = pts[pts.len() - 2];
+            let last = *pts.last().unwrap();
+            let anchored = bind_point(b, target, last, prev);
+            *pts.last_mut().unwrap() = anchored;
         }
-        if let Some(b) = &el.start_binding {
-            if let Some(target) = scene.elements.iter().find(|e| e.id == b.element_id) {
-                let next = pts[1];
-                let first = pts[0];
-                pts[0] = bind_point(b, target, first, next);
-            }
+        if let Some(b) = &el.start_binding
+            && let Some(target) = scene.elements.iter().find(|e| e.id == b.element_id)
+        {
+            let next = pts[1];
+            let first = pts[0];
+            pts[0] = bind_point(b, target, first, next);
         }
     }
     pts
@@ -317,18 +322,18 @@ fn bind_point(
     // `focus` displaces the ray origin perpendicular to the center->stored
     // direction (approximation of excalidraw's edge-offset math; exact for
     // focus = 0, which is the overwhelmingly common case).
-    if let Some(focus) = binding.focus {
-        if focus.abs() > 1e-9 {
-            let (dx, dy) = (stored.0 - center.0, stored.1 - center.1);
-            let dist = dx.hypot(dy);
-            if dist > 1e-9 {
-                let (px, py) = (-dy / dist, dx / dist);
-                let s = -focus.signum();
-                center = (
-                    center.0 + px * s * focus.abs() * dist,
-                    center.1 + py * s * focus.abs() * dist,
-                );
-            }
+    if let Some(focus) = binding.focus
+        && focus.abs() > 1e-9
+    {
+        let (dx, dy) = (stored.0 - center.0, stored.1 - center.1);
+        let dist = dx.hypot(dy);
+        if dist > 1e-9 {
+            let (px, py) = (-dy / dist, dx / dist);
+            let s = -focus.signum();
+            center = (
+                center.0 + px * s * focus.abs() * dist,
+                center.1 + py * s * focus.abs() * dist,
+            );
         }
     }
     perimeter_point(target, center, stored, gap)
@@ -364,15 +369,19 @@ fn perimeter_point(
         }
         "diamond" => {
             let denom = ux.abs() / a + uy.abs() / b;
-            if denom < 1e-12 {
-                len
-            } else {
-                denom.recip()
-            }
+            if denom < 1e-12 { len } else { denom.recip() }
         }
         _ => {
-            let tx = if ux.abs() > 1e-12 { a / ux.abs() } else { f64::MAX };
-            let ty = if uy.abs() > 1e-12 { b / uy.abs() } else { f64::MAX };
+            let tx = if ux.abs() > 1e-12 {
+                a / ux.abs()
+            } else {
+                f64::MAX
+            };
+            let ty = if uy.abs() > 1e-12 {
+                b / uy.abs()
+            } else {
+                f64::MAX
+            };
             tx.min(ty)
         }
     };
@@ -395,12 +404,7 @@ fn rounded_rect_d(x: f64, y: f64, w: f64, h: f64) -> String {
 }
 
 /// Two short sketchy strokes at each arrowhead-bearing end.
-fn emit_arrowheads(
-    svg: &mut String,
-    el: &Element,
-    pts: &[(f64, f64)],
-    generator: &Generator,
-) {
+fn emit_arrowheads(svg: &mut String, el: &Element, pts: &[(f64, f64)], generator: &Generator) {
     if pts.len() < 2 {
         return;
     }
@@ -500,11 +504,10 @@ fn emit_drawable(svg: &mut String, drawable: &roughr::core::Drawable<f32>, el: &
             _ => {
                 let _ = writeln!(
                     svg,
-                    r#"<path d="{d}" fill="none" stroke="{}" stroke-width="{:.2}" stroke-linecap="round" stroke-linejoin="round"{}{}>"#,
+                    r#"<path d="{d}" fill="none" stroke="{}" stroke-width="{:.2}" stroke-linecap="round" stroke-linejoin="round"{}>"#,
                     esc_color(&el.stroke_color),
                     el.stroke_width,
-                    dash_attr(&el.stroke_style, el.stroke_width),
-                    ""
+                    dash_attr(&el.stroke_style, el.stroke_width)
                 );
                 svg.push_str("</path>\n");
             }
@@ -527,15 +530,9 @@ fn ops_to_d(ops: &[roughr::core::Op<f32>]) -> String {
                 let _ = write!(
                     d,
                     "C{:.2} {:.2} {:.2} {:.2} {:.2} {:.2} ",
-                    op.data[0],
-                    op.data[1],
-                    op.data[2],
-                    op.data[3],
-                    op.data[4],
-                    op.data[5]
+                    op.data[0], op.data[1], op.data[2], op.data[3], op.data[4], op.data[5]
                 );
             }
-            
         }
     }
     d.trim_end().to_string()
@@ -544,7 +541,11 @@ fn ops_to_d(ops: &[roughr::core::Op<f32>]) -> String {
 fn dash(style: &str, stroke_width: f64) -> String {
     match style {
         "dashed" => format!("{:.2} {:.2}", 8.0 * stroke_width, 5.0 * stroke_width),
-        "dotted" => format!("{:.2} {:.2}", 1.5 * stroke_width.max(1.0), 5.0 * stroke_width),
+        "dotted" => format!(
+            "{:.2} {:.2}",
+            1.5 * stroke_width.max(1.0),
+            5.0 * stroke_width
+        ),
         _ => String::new(),
     }
 }
@@ -713,8 +714,7 @@ mod tests {
         let pts = anchored_points(&scene.elements[1], &scene);
         // (x - cx)²/a² + (y - cy)²/b² == 1 on the boundary.
         let (cx, cy) = (480.0, 150.0);
-        let v = (pts[1].0 - cx).powi(2) / 80f64.powi(2)
-            + (pts[1].1 - cy).powi(2) / 50f64.powi(2);
+        let v = (pts[1].0 - cx).powi(2) / 80f64.powi(2) + (pts[1].1 - cy).powi(2) / 50f64.powi(2);
         assert!((v - 1.0).abs() < 1e-6, "boundary value {v}");
     }
 

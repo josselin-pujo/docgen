@@ -35,11 +35,10 @@ pub fn fill_template(template: &[u8], doc: &Document, assets: &AssetMap) -> Resu
 
     let names: Vec<String> = zip.file_names().map(str::to_string).collect();
     let document_xml = read_entry(&mut zip, "word/document.xml")?;
-    let mut rels_xml = String::from_utf8_lossy(&read_entry(
-        &mut zip,
-        "word/_rels/document.xml.rels",
+    let mut rels_xml = String::from_utf8_lossy(
+        &read_entry(&mut zip, "word/_rels/document.xml.rels")
+            .unwrap_or_else(|_| fallback_rels().into_bytes()),
     )
-    .unwrap_or_else(|_| fallback_rels().into_bytes()))
     .into_owned();
     let mut content_types = read_entry(&mut zip, "[Content_Types].xml")?;
 
@@ -160,7 +159,8 @@ fn fill_document(
         match &owned {
             Event::Eof => break,
             Event::Start(el) => {
-                let local = el.local_name(); let name = local.as_ref();
+                let local = el.local_name();
+                let name = local.as_ref();
                 if in_paragraph {
                     depth_in_para += 1;
                 }
@@ -181,11 +181,16 @@ fn fill_document(
                     .map_err(|e| Error::Xml(e.to_string()))?;
             }
             Event::Empty(el) => {
-                let local = el.local_name(); let name = local.as_ref();
+                let local = el.local_name();
+                let name = local.as_ref();
                 if is_text_element(name) {
                     in_wt = false;
                 }
-                let w = if in_paragraph { &mut scratch } else { &mut main };
+                let w = if in_paragraph {
+                    &mut scratch
+                } else {
+                    &mut main
+                };
                 w.write_event(owned.clone())
                     .map_err(|e| Error::Xml(e.to_string()))?;
             }
@@ -206,12 +211,17 @@ fn fill_document(
                 } else {
                     owned.clone()
                 };
-                let w = if in_paragraph { &mut scratch } else { &mut main };
+                let w = if in_paragraph {
+                    &mut scratch
+                } else {
+                    &mut main
+                };
                 w.write_event(event)
                     .map_err(|e| Error::Xml(e.to_string()))?;
             }
             Event::End(el) => {
-                let local = el.local_name(); let name = local.as_ref();
+                let local = el.local_name();
+                let name = local.as_ref();
                 if is_text_element(name) {
                     in_wt = false;
                 }
@@ -249,13 +259,21 @@ fn fill_document(
                     if in_paragraph {
                         depth_in_para = depth_in_para.saturating_sub(1);
                     }
-                    let w = if in_paragraph { &mut scratch } else { &mut main };
+                    let w = if in_paragraph {
+                        &mut scratch
+                    } else {
+                        &mut main
+                    };
                     w.write_event(owned.clone())
                         .map_err(|e| Error::Xml(e.to_string()))?;
                 }
             }
             _ => {
-                let w = if in_paragraph { &mut scratch } else { &mut main };
+                let w = if in_paragraph {
+                    &mut scratch
+                } else {
+                    &mut main
+                };
                 w.write_event(owned.clone())
                     .map_err(|e| Error::Xml(e.to_string()))?;
             }

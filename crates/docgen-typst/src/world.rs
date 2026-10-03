@@ -126,8 +126,8 @@ impl MemWorld {
     /// Human-readable location (file + line) for a diagnostic span, so
     /// template authors get actionable errors.
     pub(crate) fn locate(&self, span: typst::syntax::DiagSpan) -> String {
-        use typst::syntax::DiagSpanKind;
         use typst::WorldExt;
+        use typst::syntax::DiagSpanKind;
 
         let (id, range) = match span.get() {
             DiagSpanKind::Number { id, .. } => (Some(id), self.range(span)),

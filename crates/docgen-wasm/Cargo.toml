@@ -1,6 +1,6 @@
 [package]
 name = "docgen-wasm"
-description = "Wasm embedding surface for docgen libraries: C-ABI probe today, WIT component next."
+description = "Wasm embedding surface for docgen: a zero-import WIT component wrapping every renderer."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,4 +11,20 @@ crate-type = ["cdylib", "lib"]
 [dependencies]
 docgen-core = { workspace = true }
 docgen-typst = { workspace = true }
-docgen-mermaid = { workspace = true }
+# default-features off drops merman's math (katex) chain — the only source
+# of wasm-bindgen host imports — so the module truly imports nothing.
+docgen-mermaid = { workspace = true, default-features = false }
+docgen-office = { workspace = true }
+docgen-excalidraw = { workspace = true, features = ["raster"] }
+wit-bindgen = "0.62"
+# Custom backend for wasm32-unknown-unknown: deterministic stub instead of
+# host entropy, so the module keeps importing nothing.
+getrandom = { version = "0.2", features = ["custom"] }
+
+[dev-dependencies]
+wasmparser = "0.246"
+wasmtime = "48"
+anyhow = "1"
+
+[[example]]
+name = "runner"

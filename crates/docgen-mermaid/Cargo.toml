@@ -7,5 +7,21 @@ license.workspace = true
 
 [dependencies]
 docgen-core = { workspace = true }
-merman = { workspace = true, features = ["png"] }
+# default-features off: the math (katex/ratex) chain is the only thing
+# pulling wasm-bindgen placeholders into wasm32-unknown-unknown builds.
+# The `math` feature below restores it for native builds.
+merman = { workspace = true, features = [
+    "all-diagrams",
+    "svg",
+    "layout-elk",
+    "png",
+] }
 thiserror = { workspace = true }
+
+[features]
+default = ["math"]
+math = ["merman/math"]
+
+[dev-dependencies]
+sha2 = "0.10"
+docgen-core = { workspace = true }

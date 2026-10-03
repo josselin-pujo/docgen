@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
-use similar::{capture_diff_slices, Algorithm};
+use similar::{Algorithm, capture_diff_slices};
 
 use crate::model::{Block, BlockKind, DiagramFormat, Document, Inline};
 
@@ -291,10 +291,7 @@ pub enum Step {
         fuzzy: bool,
     },
     /// Emit as-is at the new position (moves get a comment, not marks).
-    Move {
-        block: Block,
-        from: usize,
-    },
+    Move { block: Block, from: usize },
     /// Emit old content fully marked as deleted.
     Remove(Block),
 }
@@ -306,10 +303,8 @@ pub fn plan_diff(old: &Document, new: &Document) -> DiffPlan {
 }
 
 pub fn plan_diff_with(old: &Document, new: &Document, opts: &DiffOptions) -> DiffPlan {
-    let old_by_id: HashMap<&str, &Block> =
-        old.blocks.iter().map(|b| (b.id.as_str(), b)).collect();
-    let new_by_id: HashMap<&str, &Block> =
-        new.blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+    let old_by_id: HashMap<&str, &Block> = old.blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+    let new_by_id: HashMap<&str, &Block> = new.blocks.iter().map(|b| (b.id.as_str(), b)).collect();
 
     // Interleave removals correctly by LCS-ing the id sequences.
     let old_ids: Vec<&str> = old.blocks.iter().map(|b| b.id.as_str()).collect();
@@ -408,14 +403,12 @@ pub fn plan_diff_with(old: &Document, new: &Document, opts: &DiffOptions) -> Dif
                 if consumed.contains(&ai) {
                     continue;
                 }
-                if let Step::Add(nb) = &steps[ai] {
-                    if family_of(&ob.kind) == family_of(&nb.kind) {
-                        let ratio = similarity(&plain_text(ob), &plain_text(nb));
-                        if ratio >= threshold
-                            && best.map(|(b, _)| ratio > b).unwrap_or(true)
-                        {
-                            best = Some((ratio, ai));
-                        }
+                if let Step::Add(nb) = &steps[ai]
+                    && family_of(&ob.kind) == family_of(&nb.kind)
+                {
+                    let ratio = similarity(&plain_text(ob), &plain_text(nb));
+                    if ratio >= threshold && best.map(|(b, _)| ratio > b).unwrap_or(true) {
+                        best = Some((ratio, ai));
                     }
                 }
             }
@@ -448,11 +441,7 @@ fn emit_new_block(old: &Document, ob: Option<&Block>, nb: &Block) -> Step {
             if is_noop(&content) {
                 Step::Move {
                     block: nb.clone(),
-                    from: old
-                        .blocks
-                        .iter()
-                        .position(|b| b.id == nb.id)
-                        .unwrap_or(0),
+                    from: old.blocks.iter().position(|b| b.id == nb.id).unwrap_or(0),
                 }
             } else {
                 Step::Modify {
@@ -532,7 +521,11 @@ pub fn diff_runs(old: &[Inline], new: &[Inline]) -> Vec<RunOp> {
 fn ops_on<T: Eq + Hash>(
     a: &[T],
     b: &[T],
-) -> Vec<(similar::DiffTag, std::ops::Range<usize>, std::ops::Range<usize>)> {
+) -> Vec<(
+    similar::DiffTag,
+    std::ops::Range<usize>,
+    std::ops::Range<usize>,
+)> {
     capture_diff_slices(Algorithm::Patience, a, b)
         .iter()
         .map(|op| op.as_tag_tuple())
@@ -540,7 +533,11 @@ fn ops_on<T: Eq + Hash>(
 }
 
 fn run_ops(
-    ops: &[(similar::DiffTag, std::ops::Range<usize>, std::ops::Range<usize>)],
+    ops: &[(
+        similar::DiffTag,
+        std::ops::Range<usize>,
+        std::ops::Range<usize>,
+    )],
     a: &[Run],
     b: &[Run],
 ) -> Vec<RunOp> {
@@ -672,13 +669,30 @@ fn flatten_runs(inlines: &[Inline], flags: RunFlags) -> Vec<Run> {
                 },
                 &mut out,
             ),
-            Inline::Strong(inner) => flatten_into(inner, RunFlags { bold: true, ..flags }, &mut out),
-            Inline::Emphasis(inner) => {
-                flatten_into(inner, RunFlags { italic: true, ..flags }, &mut out)
-            }
-            Inline::Strikethrough(inner) => {
-                flatten_into(inner, RunFlags { strike: true, ..flags }, &mut out)
-            }
+            Inline::Strong(inner) => flatten_into(
+                inner,
+                RunFlags {
+                    bold: true,
+                    ..flags
+                },
+                &mut out,
+            ),
+            Inline::Emphasis(inner) => flatten_into(
+                inner,
+                RunFlags {
+                    italic: true,
+                    ..flags
+                },
+                &mut out,
+            ),
+            Inline::Strikethrough(inner) => flatten_into(
+                inner,
+                RunFlags {
+                    strike: true,
+                    ..flags
+                },
+                &mut out,
+            ),
             Inline::Link { text, .. } => flatten_into(text, flags, &mut out),
             Inline::Image { alt, .. } => flatten_into(alt, flags, &mut out),
             Inline::SoftBreak => push(
@@ -730,7 +744,9 @@ fn plain_text(block: &Block) -> String {
         BlockKind::Diagram { source, .. } => source.clone(),
         BlockKind::List { items, .. } => items.iter().map(item_text).collect::<Vec<_>>().join(" "),
         BlockKind::Table { rows } => rows.iter().map(row_text).collect::<Vec<_>>().join(" "),
-        BlockKind::BlockQuote { blocks } => blocks.iter().map(plain_text).collect::<Vec<_>>().join(" "),
+        BlockKind::BlockQuote { blocks } => {
+            blocks.iter().map(plain_text).collect::<Vec<_>>().join(" ")
+        }
         BlockKind::ThematicBreak => String::new(),
     }
 }
@@ -798,7 +814,9 @@ mod tests {
         match &diff.changes[0] {
             // Auto-id'd paragraph: shows up as a fuzzy-paired change carrying
             // the NEW block's id.
-            BlockChange::Changed { id, content, fuzzy, .. } => {
+            BlockChange::Changed {
+                id, content, fuzzy, ..
+            } => {
                 assert!(id.starts_with("p-"), "{id}");
                 assert!(fuzzy, "expected fuzzy pairing");
                 match content {
@@ -836,23 +854,29 @@ mod tests {
         // The paragraphs share enough words to be fuzzy-paired into one
         // change instead of remove+add noise.
         assert_eq!(diff.changes.len(), 1, "{:?}", diff.changes);
-        assert!(matches!(&diff.changes[0], BlockChange::Changed { fuzzy: true, .. }));
+        assert!(matches!(
+            &diff.changes[0],
+            BlockChange::Changed { fuzzy: true, .. }
+        ));
     }
 
     #[test]
     fn dissimilar_blocks_are_not_fuzzy_paired() {
         let old = parse_document("The quick brown fox jumps over the lazy dog.\n").unwrap();
-        let new = parse_document("Integration tests validate module contracts end to end.\n").unwrap();
+        let new =
+            parse_document("Integration tests validate module contracts end to end.\n").unwrap();
         let diff = diff_documents(&old, &new);
         assert_eq!(diff.changes.len(), 2, "{:?}", diff.changes);
-        assert!(diff
-            .changes
-            .iter()
-            .any(|c| matches!(c, BlockChange::Removed { .. })));
-        assert!(diff
-            .changes
-            .iter()
-            .any(|c| matches!(c, BlockChange::Added { .. })));
+        assert!(
+            diff.changes
+                .iter()
+                .any(|c| matches!(c, BlockChange::Removed { .. }))
+        );
+        assert!(
+            diff.changes
+                .iter()
+                .any(|c| matches!(c, BlockChange::Added { .. }))
+        );
     }
 
     #[test]
@@ -861,10 +885,11 @@ mod tests {
         let new = parse_document("# B {#b}\n\n# A {#a}\n").unwrap();
         let diff = diff_documents(&old, &new);
         assert_eq!(diff.changes.len(), 2, "{:?}", diff.changes);
-        assert!(diff
-            .changes
-            .iter()
-            .all(|c| matches!(c, BlockChange::Moved { .. })));
+        assert!(
+            diff.changes
+                .iter()
+                .all(|c| matches!(c, BlockChange::Moved { .. }))
+        );
     }
 
     #[test]
@@ -876,12 +901,14 @@ mod tests {
             BlockChange::Changed { content, .. } => match content {
                 ContentChange::Lines(ops) => {
                     assert!(ops.iter().any(|o| matches!(o, LineOp::Equal(_))));
-                    assert!(ops
-                        .iter()
-                        .any(|o| matches!(o, LineOp::Delete(d) if d.contains("fn b"))));
-                    assert!(ops
-                        .iter()
-                        .any(|o| matches!(o, LineOp::Insert(i) if i.contains("fn c"))));
+                    assert!(
+                        ops.iter()
+                            .any(|o| matches!(o, LineOp::Delete(d) if d.contains("fn b")))
+                    );
+                    assert!(
+                        ops.iter()
+                            .any(|o| matches!(o, LineOp::Insert(i) if i.contains("fn c")))
+                    );
                 }
                 other => panic!("unexpected {other:?}"),
             },
@@ -917,12 +944,14 @@ mod tests {
         match &diff.changes[0] {
             BlockChange::Changed { content, .. } => match content {
                 ContentChange::Rows(ops) => {
-                    assert!(ops
-                        .iter()
-                        .any(|o| matches!(o, LineOp::Delete(d) if d.contains("1 | 2"))));
-                    assert!(ops
-                        .iter()
-                        .any(|o| matches!(o, LineOp::Insert(i) if i.contains("9 | 2"))));
+                    assert!(
+                        ops.iter()
+                            .any(|o| matches!(o, LineOp::Delete(d) if d.contains("1 | 2")))
+                    );
+                    assert!(
+                        ops.iter()
+                            .any(|o| matches!(o, LineOp::Insert(i) if i.contains("9 | 2")))
+                    );
                 }
                 other => panic!("unexpected {other:?}"),
             },

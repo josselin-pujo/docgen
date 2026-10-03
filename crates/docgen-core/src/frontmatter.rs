@@ -48,10 +48,10 @@ pub fn parse(yaml: &str) -> Result<Frontmatter> {
         .map_err(|e| Error::Frontmatter(format!("YAML error: {e}")))?;
     // YAML dates like `2026-10-03` may deserialize as mappings/whatnot for
     // String fields via serde_json bridging; normalize the common scalars.
-    if let Some(v) = fm.extra.remove("date") {
-        if fm.date.is_none() {
-            fm.date = scalar_to_string(&v);
-        }
+    if let Some(v) = fm.extra.remove("date")
+        && fm.date.is_none()
+    {
+        fm.date = scalar_to_string(&v);
     }
     Ok(fm)
 }

@@ -76,7 +76,10 @@ pub enum Elem {
     Bullets(Vec<Bullet>),
     Table(Vec<TableRow>),
     /// Rendered diagram image, keyed by block id.
-    Picture { block_id: String, alt: String },
+    Picture {
+        block_id: String,
+        alt: String,
+    },
     Code {
         language: Option<String>,
         code: String,
@@ -97,13 +100,15 @@ pub struct Bullet {
 pub fn slides_for(doc: &Document) -> Vec<SlideSpec> {
     intro_slides(doc)
         .into_iter()
-        .chain(Builder {
-            slides: Vec::new(),
-            current: None,
-            last_heading: None,
-            changes: &HashMap::new(),
-        }
-        .run(doc))
+        .chain(
+            Builder {
+                slides: Vec::new(),
+                current: None,
+                last_heading: None,
+                changes: &HashMap::new(),
+            }
+            .run(doc),
+        )
         .collect()
 }
 
@@ -210,7 +215,7 @@ fn plan_counts(plan: &DiffPlan) -> (usize, usize, usize) {
 
 fn tag_block(changes: &mut HashMap<String, &'static str>, id: &str, tag: &'static str) {
     let entry = changes.entry(id.to_string()).or_insert(tag);
-    if rank(*entry) < rank(tag) {
+    if rank(entry) < rank(tag) {
         *entry = tag;
     }
 }
@@ -301,7 +306,13 @@ impl<'a> Builder<'a> {
             let cont_title = prev
                 .title
                 .clone()
-                .map(|t| if t.ends_with("(cont.)") { t } else { format!("{t} (cont.)") })
+                .map(|t| {
+                    if t.ends_with("(cont.)") {
+                        t
+                    } else {
+                        format!("{t} (cont.)")
+                    }
+                })
                 .or_else(|| self.last_heading.clone());
             let tag = prev.tag;
             self.slides.push(prev);
@@ -336,10 +347,7 @@ impl<'a> Builder<'a> {
                 }
             }
             BlockKind::Paragraph { inline } => {
-                let is_lead = self
-                    .current
-                    .as_ref()
-                    .is_some_and(|s| s.elems.is_empty());
+                let is_lead = self.current.as_ref().is_some_and(|s| s.elems.is_empty());
                 if is_lead {
                     let s = self.current.as_mut().unwrap();
                     s.tag = s.tag.or(tag);
@@ -358,9 +366,9 @@ impl<'a> Builder<'a> {
                 start,
                 items,
             } => {
-                let s = self.current.get_or_insert_with(|| {
-                    SlideSpec::content(self.last_heading.clone())
-                });
+                let s = self
+                    .current
+                    .get_or_insert_with(|| SlideSpec::content(self.last_heading.clone()));
                 s.tag = s.tag.or(tag);
                 self.list(items, *ordered, *start, 0);
             }
@@ -371,9 +379,9 @@ impl<'a> Builder<'a> {
                 if needs_own {
                     self.flush();
                 }
-                let s = self.current.get_or_insert_with(|| {
-                    SlideSpec::content(self.last_heading.clone())
-                });
+                let s = self
+                    .current
+                    .get_or_insert_with(|| SlideSpec::content(self.last_heading.clone()));
                 s.tag = s.tag.or(tag);
                 s.elems.push(Elem::Table(rows.clone()));
                 self.flush();
@@ -383,9 +391,9 @@ impl<'a> Builder<'a> {
                 if needs_own {
                     self.flush();
                 }
-                let s = self.current.get_or_insert_with(|| {
-                    SlideSpec::content(self.last_heading.clone())
-                });
+                let s = self
+                    .current
+                    .get_or_insert_with(|| SlideSpec::content(self.last_heading.clone()));
                 s.tag = s.tag.or(tag);
                 s.elems.push(Elem::Picture {
                     block_id: block.id.clone(),
@@ -398,9 +406,9 @@ impl<'a> Builder<'a> {
                 if needs_own {
                     self.flush();
                 }
-                let s = self.current.get_or_insert_with(|| {
-                    SlideSpec::content(self.last_heading.clone())
-                });
+                let s = self
+                    .current
+                    .get_or_insert_with(|| SlideSpec::content(self.last_heading.clone()));
                 s.tag = s.tag.or(tag);
                 s.elems.push(Elem::Code {
                     language: language.clone(),
@@ -417,9 +425,9 @@ impl<'a> Builder<'a> {
                     })
                     .flatten()
                     .collect();
-                let s = self.current.get_or_insert_with(|| {
-                    SlideSpec::content(self.last_heading.clone())
-                });
+                let s = self
+                    .current
+                    .get_or_insert_with(|| SlideSpec::content(self.last_heading.clone()));
                 s.tag = s.tag.or(tag);
                 s.elems.push(Elem::Quote(inline));
             }

@@ -12,7 +12,7 @@ path = "src/main.rs"
 [dependencies]
 docgen-core = { workspace = true }
 docgen-typst = { workspace = true }
-docgen-mermaid = { workspace = true }
+docgen-mermaid = { workspace = true, features = ["math"] }
 docgen-excalidraw = { workspace = true, features = ["raster"] }
 docgen-office = { workspace = true }
 anyhow = { workspace = true }

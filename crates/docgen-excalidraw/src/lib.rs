@@ -80,7 +80,11 @@ pub fn rasterize(svg: &str) -> Result<Vec<u8>> {
     let h = (size.height() * scale).ceil().max(1.0) as u32;
     let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h)
         .ok_or_else(|| ExcalidrawError::Invalid("pixmap alloc".into()))?;
-    resvg::render(&tree, Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+    resvg::render(
+        &tree,
+        Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
     pixmap
         .encode_png()
         .map_err(|e| ExcalidrawError::Invalid(format!("png encode: {e}")).into())
@@ -214,8 +218,7 @@ mod tests {
 
     #[test]
     fn bare_elements_array_parses() {
-        let scene = parse_scene(r#"[{"type": "rectangle", "id": "r", "x": 0, "y": 0}]"#)
-            .unwrap();
+        let scene = parse_scene(r#"[{"type": "rectangle", "id": "r", "x": 0, "y": 0}]"#).unwrap();
         assert_eq!(scene.elements.len(), 1);
     }
 }

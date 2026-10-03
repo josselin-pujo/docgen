@@ -29,9 +29,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" 
 xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\"";
 
 fn xfrm((x, y, cx, cy): (i64, i64, i64, i64)) -> String {
-    format!(
-        "<a:xfrm><a:off x=\"{x}\" y=\"{y}\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm>"
-    )
+    format!("<a:xfrm><a:off x=\"{x}\" y=\"{y}\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm>")
 }
 
 /// `ppt/presentation.xml`. `slide_rids` are the relationship ids of the

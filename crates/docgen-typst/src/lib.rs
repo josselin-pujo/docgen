@@ -12,7 +12,7 @@
 //! `World::today` deliberately returns `None`: no clocks in the library, ever.
 //! Document dates should come from frontmatter.
 
-mod emit;
+pub mod emit;
 mod world;
 
 use docgen_core::assets::AssetMap;
@@ -75,8 +75,7 @@ impl TypstRenderer {
     pub fn render_pdf(&self, doc: &Document, assets: &AssetMap) -> Result<(Vec<u8>, Vec<String>)> {
         let paged = self.compile(doc, assets)?;
         let bytes = typst_pdf::pdf(&paged.0, &PdfOptions::default()).map_err(|errs| {
-            let messages: Vec<String> =
-                errs.iter().map(|e| e.message.to_string()).collect();
+            let messages: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
             Error::Backend(messages.join("; "))
         })?;
         Ok((bytes, paged.1))
@@ -121,7 +120,8 @@ impl TypstRenderer {
                 .map(|e| format!("{} ({})", e.message, world.locate(e.span)))
                 .collect();
             Error::Backend(messages.join("; "))
-        })?;        Ok((paged, warnings))
+        })?;
+        Ok((paged, warnings))
     }
 }
 

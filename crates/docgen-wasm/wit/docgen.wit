@@ -1,0 +1,35 @@
+package docgen:render@0.1.0;
+
+/// docgen's whole rendering surface. The world imports nothing: every
+/// engine (typst, merman, roughr, the OOXML writers) is compiled in and
+/// works on in-memory buffers only.
+interface render {
+    enum diagram-format {
+        mermaid,
+        excalidraw,
+    }
+
+    /// Crate version of the compiled renderer set.
+    version: func() -> string;
+
+    /// Markdown (with YAML frontmatter; ```mermaid```/```excalidraw```
+    /// blocks rendered as SVG) → PDF bytes.
+    render-pdf: func(markdown: string) -> result<list<u8>, string>;
+
+    /// Markdown → DOCX bytes (diagrams rasterized to PNG).
+    render-docx: func(markdown: string) -> result<list<u8>, string>;
+
+    /// Markdown → PPTX bytes (diagrams rasterized to PNG).
+    render-pptx: func(markdown: string) -> result<list<u8>, string>;
+
+    /// Standalone diagram source (mermaid text or excalidraw JSON) → SVG.
+    render-diagram-svg: func(source: string, format: diagram-format) -> result<string, string>;
+
+    /// Two markdown revisions → DOCX with native Word tracked changes.
+    /// Empty `date` falls back to the new revision's frontmatter date.
+    diff-docx: func(old: string, new: string, author: string, date: string) -> result<list<u8>, string>;
+}
+
+world docgen {
+    export render;
+}

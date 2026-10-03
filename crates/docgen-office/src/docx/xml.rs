@@ -1,8 +1,8 @@
 //! Tiny typed wrapper over quick-xml's writer: element helpers with escaped
 //! attributes and text, so emitters never hand-build strings.
 
-use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::Writer;
+use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 
 use crate::Error;
 

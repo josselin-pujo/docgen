@@ -169,6 +169,7 @@ impl Fonts {
         lines.len() as f64 * size * line_height
     }
 
+    #[allow(clippy::too_many_arguments)] // font layout parameters travel together
     pub fn text_to_path(
         &self,
         text: &str,
@@ -221,13 +222,7 @@ impl Fonts {
 /// Appends glyph outline curves (font units, y-up) into `d` as SVG path
 /// data, scaled by `scale` and flipped around the baseline. Each curve
 /// carries its start point; the first starts a subpath.
-fn push_outline(
-    d: &mut String,
-    curves: &[OutlineCurve],
-    pen_x: f64,
-    baseline_y: f64,
-    scale: f32,
-) {
+fn push_outline(d: &mut String, curves: &[OutlineCurve], pen_x: f64, baseline_y: f64, scale: f32) {
     let to_svg = |p: &ab_glyph::Point| {
         format!(
             "{:.2},{:.2} ",
@@ -240,24 +235,24 @@ fn push_outline(
         match curve {
             OutlineCurve::Line(p0, p1) => {
                 if first {
-                    let _ = write!(d, "M{} ", to_svg(&p0));
+                    let _ = write!(d, "M{} ", to_svg(p0));
                     first = false;
                 }
-                let _ = write!(d, "L{} ", to_svg(&p1));
+                let _ = write!(d, "L{} ", to_svg(p1));
             }
             OutlineCurve::Quad(p0, q, p1) => {
                 if first {
-                    let _ = write!(d, "M{} ", to_svg(&p0));
+                    let _ = write!(d, "M{} ", to_svg(p0));
                     first = false;
                 }
-                let _ = write!(d, "Q{}{} ", to_svg(&q), to_svg(&p1));
+                let _ = write!(d, "Q{}{} ", to_svg(q), to_svg(p1));
             }
             OutlineCurve::Cubic(p0, c1, c2, p1) => {
                 if first {
-                    let _ = write!(d, "M{} ", to_svg(&p0));
+                    let _ = write!(d, "M{} ", to_svg(p0));
                     first = false;
                 }
-                let _ = write!(d, "C{}{}{} ", to_svg(&c1), to_svg(&c2), to_svg(&p1));
+                let _ = write!(d, "C{}{}{} ", to_svg(c1), to_svg(c2), to_svg(p1));
             }
         }
     }

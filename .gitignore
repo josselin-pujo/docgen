@@ -5,3 +5,6 @@ examples/*.png
 
 examples/*.docx
 examples/*.pptx
+crates/*/fuzz/target/
+crates/*/fuzz/corpus/
+crates/*/fuzz/coverage/

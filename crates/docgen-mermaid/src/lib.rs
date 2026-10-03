@@ -9,9 +9,7 @@ use docgen_core::model::DiagramFormat;
 use docgen_core::{Error, Result};
 use merman::svg::export::RasterOptions;
 use merman::svg::{CssOverridePolicy, ScopedCssPostprocessor, SvgPipeline};
-use merman::{
-    OperationControl, PngRequest, RenderOutput, RenderRequest, Renderer, SvgRequest,
-};
+use merman::{OperationControl, PngRequest, RenderOutput, RenderRequest, Renderer, SvgRequest};
 
 /// merman's flowchart CSS hardcodes `opacity: 0.5` on edge-label plates
 /// (`#merman .edgeLabel rect`), parroting mermaid.js — half the edge line
@@ -148,7 +146,12 @@ impl MermaidRenderer {
 }
 
 impl DiagramRenderer for MermaidRenderer {
-    fn render(&self, _block_id: &str, format: DiagramFormat, source: &str) -> Result<RenderedAsset> {
+    fn render(
+        &self,
+        _block_id: &str,
+        format: DiagramFormat,
+        source: &str,
+    ) -> Result<RenderedAsset> {
         match format {
             DiagramFormat::Mermaid => {
                 if self.raster {
@@ -209,7 +212,8 @@ mod tests {
             .expect("render");
         let css = extract_css(&svg);
         assert!(
-            css.iter().any(|rule| { rule.contains("edgeLabel") && rule.contains("fill:#ffffff") }),
+            css.iter()
+                .any(|rule| { rule.contains("edgeLabel") && rule.contains("fill:#ffffff") }),
             "edgeLabel background not white in CSS: {css:?}"
         );
     }
@@ -235,10 +239,7 @@ mod tests {
         let start = svg.find("<style").map(|i| i + "<style".len());
         let end = svg.find("</style>");
         match (start, end) {
-            (Some(s), Some(e)) if s < e => svg[s..e]
-                .split('}')
-                .map(|r| format!("{r}}}"))
-                .collect(),
+            (Some(s), Some(e)) if s < e => svg[s..e].split('}').map(|r| format!("{r}}}")).collect(),
             _ => Vec::new(),
         }
     }

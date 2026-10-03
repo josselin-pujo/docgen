@@ -55,7 +55,7 @@ const DEFAULT_TEMPLATE: &str = r##"#import "docgen-meta.typ": meta
 "##;
 
 /// Everything the in-memory world needs to compile one document.
-pub(crate) struct Emitted {
+pub struct Emitted {
     /// The main source (template).
     pub main: String,
     /// Additional typst sources addressable by relative path.
@@ -66,7 +66,9 @@ pub(crate) struct Emitted {
 
 /// `template` replaces the built-in default; it can `#import`/`#include` the
 /// virtual files above.
-pub(crate) fn emit(doc: &Document, assets: &AssetMap, template: Option<&str>) -> Emitted {
+/// Emits the typst sources for a document (main + virtual modules).
+/// Public for fuzzing and golden tests; the renderer compiles these.
+pub fn emit(doc: &Document, assets: &AssetMap, template: Option<&str>) -> Emitted {
     let mut body = String::with_capacity(4096);
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut used_names: HashSet<String> = Default::default();
@@ -116,18 +118,18 @@ fn emit_meta(doc: &Document) -> String {
             json_to_typst(value)
         ));
     };
+    field("title", &opt_str(&fm.title), &mut out);
+    field("subtitle", &opt_str(&fm.subtitle), &mut out);
     field(
-        "title",
-        &opt_str(&fm.title),
+        "authors",
+        &serde_json::Value::Array(
+            fm.authors
+                .iter()
+                .map(|a| serde_json::Value::String(a.clone()))
+                .collect(),
+        ),
         &mut out,
     );
-    field("subtitle", &opt_str(&fm.subtitle), &mut out);
-    field("authors", &serde_json::Value::Array(
-        fm.authors
-            .iter()
-            .map(|a| serde_json::Value::String(a.clone()))
-            .collect(),
-    ), &mut out);
     field("date", &opt_str(&fm.date), &mut out);
     field("version", &opt_str(&fm.version), &mut out);
     field("doc_id", &opt_str(&fm.doc_id), &mut out);
@@ -230,7 +232,11 @@ fn emit_block(
                 }
             }
         }
-        BlockKind::List { ordered, start, items } => {
+        BlockKind::List {
+            ordered,
+            start,
+            items,
+        } => {
             emit_list(*ordered, *start, items, 0, out);
             out.push('\n');
         }
@@ -265,7 +271,12 @@ fn emit_list(ordered: bool, start: u64, items: &[ListItem], depth: usize, out: &
             inline_markup(&item.content)
         ));
         for child in &item.children {
-            if let BlockKind::List { ordered, start, items } = &child.kind {
+            if let BlockKind::List {
+                ordered,
+                start,
+                items,
+            } = &child.kind
+            {
                 emit_list(*ordered, *start, items, depth + 1, out);
             }
         }
@@ -363,8 +374,8 @@ fn esc(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
-            '\\' | '#' | '*' | '_' | '`' | '[' | ']' | '$' | '<' | '>' | '"' | '\'' | '@'
-            | '/' | '%' | '^' | '~' | '&' => {
+            '\\' | '#' | '*' | '_' | '`' | '[' | ']' | '$' | '<' | '>' | '"' | '\'' | '@' | '/'
+            | '%' | '^' | '~' | '&' => {
                 out.push('\\');
                 out.push(c);
             }

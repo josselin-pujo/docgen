@@ -6,16 +6,14 @@
 
 use std::collections::VecDeque;
 
-use pulldown_cmark::{
-    CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd,
-};
+use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
+use crate::Result;
 use crate::frontmatter;
-use crate::ids::{fnv1a64, slug, IdAllocator};
+use crate::ids::{IdAllocator, fnv1a64, slug};
 use crate::model::{
     Block, BlockKind, DiagramFormat, Document, Frontmatter, Inline, ListItem, TableRow,
 };
-use crate::Result;
 
 pub fn parse_document(markdown: &str) -> Result<Document> {
     let (yaml, body) = frontmatter::split(markdown);
@@ -59,22 +57,18 @@ impl ParseCtx {
                         blocks.push(block);
                     }
                 }
-                Event::End(end) => {
-                    if Some(end) == stop {
-                        break;
-                    }
+                Event::End(end) if Some(end) == stop => {
+                    break;
                 }
                 Event::Rule => blocks.push(self.mk_block(BlockKind::ThematicBreak, None)),
                 // Stray content outside any block (rare with commonmark).
-                Event::Text(t) if stop.is_none() => {
-                    if !t.trim().is_empty() {
-                        blocks.push(self.mk_block(
-                            BlockKind::Paragraph {
-                                inline: vec![Inline::Text(t.into_string())],
-                            },
-                            None,
-                        ));
-                    }
+                Event::Text(t) if stop.is_none() && !t.trim().is_empty() => {
+                    blocks.push(self.mk_block(
+                        BlockKind::Paragraph {
+                            inline: vec![Inline::Text(t.into_string())],
+                        },
+                        None,
+                    ));
                 }
                 _ => {}
             }
@@ -103,10 +97,7 @@ impl ParseCtx {
                 let wanted = id
                     .map(|s| s.into_string())
                     .unwrap_or_else(|| slug(&Inline::plain_text(&inline)));
-                Some(self.mk_block(
-                    BlockKind::Heading { level, inline },
-                    Some(wanted),
-                ))
+                Some(self.mk_block(BlockKind::Heading { level, inline }, Some(wanted)))
             }
             Tag::BlockQuote(_) => {
                 let blocks = self.parse_blocks(events, Some(TagEnd::BlockQuote(None)));
@@ -126,10 +117,7 @@ impl ParseCtx {
                     CodeBlockKind::Fenced(info) => parse_info(info),
                     CodeBlockKind::Indented => (None, None),
                 };
-                let kind = match language
-                    .as_deref()
-                    .and_then(DiagramFormat::from_language)
-                {
+                let kind = match language.as_deref().and_then(DiagramFormat::from_language) {
                     Some(format) => BlockKind::Diagram {
                         format,
                         source: trim_common_indent(&code),
@@ -315,19 +303,15 @@ impl ParseCtx {
         out
     }
 
-    fn inline_from_event(
-        &mut self,
-        events: &mut VecDeque<Event>,
-        event: Event,
-    ) -> Option<Inline> {
+    fn inline_from_event(&mut self, events: &mut VecDeque<Event>, event: Event) -> Option<Inline> {
         match event {
             Event::Text(t) => Some(Inline::Text(t.into_string())),
             Event::Code(t) => Some(Inline::Code(t.into_string())),
             Event::SoftBreak => Some(Inline::SoftBreak),
             Event::HardBreak => Some(Inline::HardBreak),
-            Event::Start(Tag::Strong) => Some(Inline::Strong(
-                self.parse_inline(events, TagEnd::Strong),
-            )),
+            Event::Start(Tag::Strong) => {
+                Some(Inline::Strong(self.parse_inline(events, TagEnd::Strong)))
+            }
             Event::Start(Tag::Emphasis) => Some(Inline::Emphasis(
                 self.parse_inline(events, TagEnd::Emphasis),
             )),
@@ -338,7 +322,12 @@ impl ParseCtx {
                 url: dest_url.into_string(),
                 text: self.parse_inline(events, TagEnd::Link),
             }),
-            Event::Start(Tag::Image { link_type, dest_url, title, id }) => {
+            Event::Start(Tag::Image {
+                link_type,
+                dest_url,
+                title,
+                id,
+            }) => {
                 let _ = (link_type, title, id);
                 Some(Inline::Image {
                     url: dest_url.into_string(),
@@ -396,11 +385,11 @@ fn parse_info(info: &str) -> (Option<String>, Option<String>) {
     let mut language = None;
     let mut id = None;
     for token in info.split_whitespace() {
-        if let Some(rest) = token.strip_prefix("{#") {
-            if let Some(name) = rest.strip_suffix('}') {
-                id = Some(name.to_owned());
-                continue;
-            }
+        if let Some(rest) = token.strip_prefix("{#")
+            && let Some(name) = rest.strip_suffix('}')
+        {
+            id = Some(name.to_owned());
+            continue;
         }
         if language.is_none() {
             language = Some(token.to_owned());
@@ -424,7 +413,6 @@ fn trim_common_indent(code: &str) -> String {
         .map(|l| l.get(indent..).unwrap_or(l))
         .collect::<Vec<_>>()
         .join("\n")
-        + if code.ends_with('\n') { "" } else { "" }
 }
 
 #[cfg(test)]

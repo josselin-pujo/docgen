@@ -268,7 +268,10 @@ mod tests {
         assert_eq!(scene.elements[2].container_id.as_deref(), Some("r1"));
         assert_eq!(scene.app_state.view_background_color, "#ffffff");
         // top-level extras preserved
-        assert_eq!(scene.extra.get("type").and_then(|v| v.as_str()), Some("excalidraw"));
+        assert_eq!(
+            scene.extra.get("type").and_then(|v| v.as_str()),
+            Some("excalidraw")
+        );
     }
 
     #[test]
@@ -286,6 +289,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(scene.elements[0].stroke_width, 1.0);
-        assert_eq!(scene.elements[0].extra.get("futureField").and_then(|v| v.as_i64()), Some(1));
+        assert_eq!(
+            scene.elements[0]
+                .extra
+                .get("futureField")
+                .and_then(|v| v.as_i64()),
+            Some(1)
+        );
     }
 }

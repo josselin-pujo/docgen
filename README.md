@@ -11,7 +11,7 @@ CLI, inside CI, and in a wasm runtime (`wasm32-wasip1/2` are the supported
 targets; a browser `wasm32-unknown-unknown` build of the render core is a
 roadmap item).
 
-## Status (M4 — working today)
+## Status (M5 — working today)
 
 - **Markdown + rich YAML frontmatter** → typed document model
   (`docgen-core`): headings, paragraphs, inline styles (bold/italic/code/
@@ -100,6 +100,18 @@ roadmap item).
   focus, gap against rectangle/ellipse/diamond perimeters), so scenes
   edited outside the app — elements moved without updating arrow points —
   still render with arrows attached.
+- **Wasm component** (`docgen-wasm`): the whole pipeline — parse,
+  mermaid + excalidraw diagrams, typst PDF, DOCX/PPTX writers, diff — is
+  exported through a WIT world (`crates/docgen-wasm/wit/docgen.wit`:
+  `render-pdf`, `render-docx`, `render-pptx`, `render-diagram-svg`,
+  `diff-docx`, `version`) that **imports nothing**. Build the core module
+  for `wasm32-unknown-unknown` (zero host imports — merman's katex chain
+  is feature-gated off for this crate only, and `getrandom` gets a
+  deterministic custom backend) and componentize with
+  `wasm-tools component new`; `cargo test -p docgen-wasm` asserts the
+  import surface. CI (`.github/workflows/ci.yml`) runs fmt/clippy/tests,
+  wasm checks on both targets, the component build, and fuzz-target
+  builds; outputs are pinned by golden SHA-256 tests per crate.
 - **CLI**:
   - `docgen render doc.md [-o out] [--format pdf|docx|pptx] [--template ...]`
   - `docgen diff old.md new.md [-o out] [--format docx|pptx] [--author A] [--date D]`
@@ -118,7 +130,7 @@ cargo run -p docgen-cli -- example-style 2>/dev/null   # (see examples/)
 | `docgen-typst` | model → typst markup → PDF/PNG via in-memory `World` | ✅ wasip1 |
 | `docgen-mermaid` | `DiagramRenderer` impl backed by merman (SVG + PNG) | ✅ wasip1, ✅ unknown-unknown |
 | `docgen-office` | DOCX output + revision-aware diff (tracked changes, comments, templates) | ✅ wasip1 |
-| `docgen-wasm` | wasm embedding surface: C-ABI probe today, WIT component in M5 | n/a |
+| `docgen-wasm` | WIT component exporting every renderer; imports nothing | ✅ unknown-unknown |
 | `docgen-cli` | the only crate that touches the filesystem | n/a |
 
 ## How IOless is the wasm story, really?
@@ -210,14 +222,20 @@ WASI preview1 surface is never needed.
 shaping rather than the originally sketched `cosmic-text` — lighter,
 wasm-safe, and text becomes SVG paths either way.)
 
-### M5 — wasm packaging & CI
+### M5 — wasm packaging & CI ✅ (shipped; refinements below)
 
-- Turn `docgen-wasm` into the real embedding surface: a WIT component with a
-  custom world (`render-pdf`, `render-diagram`, later `diff-docx`) importing
-  nothing (see "How IOless is the wasm story, really?" above), plus an
-  optional wasm-bindgen shell for browsers reusing the same libraries.
-- CI jobs: `cargo check --target wasm32-wasip1` and
-  `--target wasm32-unknown-unknown` for every library crate; import-surface
-  assertion on the built component (fail if new host imports appear).
-- Golden-file tests for PDF/DOCX outputs; fuzz the frontmatter splitter
-  and the typst escaper.
+Shipped exactly as sketched above: WIT world importing nothing (see the
+status section), zero-import `wasm32-unknown-unknown` core (katex chain
+feature-gated off for the wasm crate; deterministic `getrandom` custom
+backend), `wasm-tools component new` componentization, import-surface
+assertion tests, per-crate golden hashes, cargo-fuzz targets
+(frontmatter splitter, typst emitter), and a four-job GitHub Actions
+workflow (test / wasm / component / fuzz-build).
+
+- Real host smoke-run: a tiny wasmtime runner invoking the component
+  end-to-end in CI.
+- Browser shell (wasm-bindgen) reusing the same libraries.
+- Publish the component (registry artifact) once there is a consumer.
+
+(Deferred with intent: mermaid → excalidraw conversion via the rquickjs
+runtime — raw excalidraw JSON input covers the spec'd need.)
