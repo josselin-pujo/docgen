@@ -17,32 +17,40 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Render a markdown document (with YAML frontmatter) to PDF or DOCX.
+    /// Render a markdown document (with YAML frontmatter) to PDF, DOCX or
+    /// PPTX.
     Render {
         /// Input markdown file.
         input: PathBuf,
         /// Output file; defaults to <input>.<format>.
         #[arg(short, long)]
         out: Option<PathBuf>,
-        /// Output format: pdf (typst) or docx (OOXML).
+        /// Output format: pdf (typst), docx (OOXML) or pptx
+        /// (PresentationML).
         #[arg(short, long, default_value = "pdf")]
         format: String,
         /// Template. For pdf: a typst template (see docgen-typst docs).
         /// For docx: a .docx template with {{placeholders}} and a
-        /// {{docgen:body}} marker paragraph.
+        /// {{docgen:body}} marker paragraph. For pptx: a .pptx whose
+        /// masters/layouts/theme provide the look; generated slides are
+        /// appended.
         #[arg(short, long)]
         template: Option<PathBuf>,
     },
     /// Diff two revisions of a markdown document into a DOCX with native
-    /// Word tracked changes (w:ins/w:del) and comments on moves/diagrams.
+    /// Word tracked changes (w:ins/w:del) and comments on moves/diagrams,
+    /// or a PPTX with revision chips and a summary slide.
     Diff {
         /// The old revision.
         old: PathBuf,
         /// The new revision.
         new: PathBuf,
-        /// Output docx; defaults to <new>.diff.docx.
+        /// Output file; defaults to <new>.diff.docx / <new>.diff.pptx.
         #[arg(short, long)]
         out: Option<PathBuf>,
+        /// Output format (docx or pptx).
+        #[arg(short, long, default_value = "docx")]
+        format: String,
         /// Author attributed to the tracked changes.
         #[arg(short, long, default_value = "docgen")]
         author: String,
@@ -77,9 +85,10 @@ fn main() -> anyhow::Result<()> {
             old,
             new,
             out,
+            format,
             author,
             date,
-        } => diff(old, new, out, &author, date),
+        } => diff(old, new, out, &format, &author, date),
         Command::Diagram {
             input,
             out,
@@ -143,7 +152,30 @@ fn render(
             std::fs::write(&out, bytes).with_context(|| format!("writing {}", out.display()))?;
             println!("wrote {}", out.display());
         }
-        other => bail!("unsupported format {other:?} (use pdf or docx)"),
+        "pptx" => {
+            // Diagrams become PNG images inside the deck.
+            let outcome =
+                docgen_core::assets::render_diagrams(&doc, &MermaidRenderer::raster())
+                    .context("rendering diagrams")?;
+            warn_skipped(&outcome.skipped);
+
+            let bytes = match template {
+                Some(template_path) => {
+                    let template = std::fs::read(&template_path).with_context(|| {
+                        format!("reading template {}", template_path.display())
+                    })?;
+                    docgen_office::pptx::fill_template(&template, &doc, &outcome.assets)
+                        .context("filling pptx template")?
+                }
+                None => docgen_office::pptx::render_pptx(&doc, &outcome.assets)
+                    .context("rendering pptx")?,
+            };
+            docgen_office::pptx::validate_pptx(&bytes).context("validating pptx")?;
+            let out = out.unwrap_or_else(|| with_extension(&input, "pptx"));
+            std::fs::write(&out, bytes).with_context(|| format!("writing {}", out.display()))?;
+            println!("wrote {}", out.display());
+        }
+        other => bail!("unsupported format {other:?} (use pdf, docx or pptx)"),
     }
     Ok(())
 }
@@ -152,6 +184,7 @@ fn diff(
     old_path: PathBuf,
     new_path: PathBuf,
     out: Option<PathBuf>,
+    format: &str,
     author: &str,
     date: Option<String>,
 ) -> anyhow::Result<()> {
@@ -182,19 +215,37 @@ fn diff(
         None => docgen_office::docx::RevisionIdentity::from_frontmatter(author, &new.frontmatter),
     };
 
-    let bytes = docgen_office::docx::render_diff_docx(
-        &old,
-        &new,
-        &old_outcome.assets,
-        &new_outcome.assets,
-        &identity,
-    )
-    .context("rendering diff docx")?;
-    docgen_office::docx::validate_docx(&bytes).context("validating docx")?;
-
-    let out = out.unwrap_or_else(|| with_extension(&new_path, "diff.docx"));
-    std::fs::write(&out, bytes).with_context(|| format!("writing {}", out.display()))?;
-    println!("wrote {}", out.display());
+    match format.to_ascii_lowercase().as_str() {
+        "docx" => {
+            let bytes = docgen_office::docx::render_diff_docx(
+                &old,
+                &new,
+                &old_outcome.assets,
+                &new_outcome.assets,
+                &identity,
+            )
+            .context("rendering diff docx")?;
+            docgen_office::docx::validate_docx(&bytes).context("validating docx")?;
+            let out = out.unwrap_or_else(|| with_extension(&new_path, "diff.docx"));
+            std::fs::write(&out, bytes).with_context(|| format!("writing {}", out.display()))?;
+            println!("wrote {}", out.display());
+        }
+        "pptx" => {
+            let bytes = docgen_office::pptx::render_diff_pptx(
+                &old,
+                &new,
+                &old_outcome.assets,
+                &new_outcome.assets,
+                &identity,
+            )
+            .context("rendering diff pptx")?;
+            docgen_office::pptx::validate_pptx(&bytes).context("validating pptx")?;
+            let out = out.unwrap_or_else(|| with_extension(&new_path, "diff.pptx"));
+            std::fs::write(&out, bytes).with_context(|| format!("writing {}", out.display()))?;
+            println!("wrote {}", out.display());
+        }
+        other => bail!("unsupported diff format {other:?} (use docx or pptx)"),
+    }
     Ok(())
 }
 

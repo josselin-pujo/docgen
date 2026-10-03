@@ -11,7 +11,7 @@ CLI, inside CI, and in a wasm runtime (`wasm32-wasip1/2` are the supported
 targets; a browser `wasm32-unknown-unknown` build of the render core is a
 roadmap item).
 
-## Status (M2 — working today)
+## Status (M3 — working today)
 
 - **Markdown + rich YAML frontmatter** → typed document model
   (`docgen-core`): headings, paragraphs, inline styles (bold/italic/code/
@@ -41,7 +41,10 @@ roadmap item).
   labels silently. Edge-label plates default to opaque white (invisible on
   white pages, masks the edge line that would otherwise strike through the
   label); `EdgeLabelBackground::Transparent` opts out for colored page
-  backgrounds.
+  backgrounds. merman hardcodes `opacity: 0.5` on those plates (parroting
+  mermaid.js), which lets half the line bleed through — docgen pipes a
+  `ScopedCssPostprocessor` through merman's SVG pipeline to restore full
+  opacity in both the SVG and the raster path.
 - **PDF** via embedded typst 0.15 against a custom in-memory `World`:
   fonts compiled in from `typst-assets` (Libertinus + NewCM math + DejaVu
   mono), deterministic output (`World::today` returns `None` — document
@@ -63,9 +66,26 @@ roadmap item).
   frontmatter, and a `{{docgen:body}}` marker paragraph replaced by the
   body (direct formatting — no dependency on the template's styles).
   Diagram images are appended to `word/media/` with fresh rel ids.
+- **PPTX output** (`docgen-office::pptx`): PresentationML decks from the
+  same document model — title slide from frontmatter, one slide per H1/H2
+  with lead/bullets/lists, tables as bordered DrawingML tables with shaded
+  headers, code blocks in content-sized monospace boxes, diagrams as
+  centered PNG pictures, hyperlinks as live slide rels. Output is
+  byte-deterministic (same fixed-timestamp zip discipline as docx) and
+  opens cleanly in PowerPoint/LibreOffice/python-pptx.
+- **PPTX templates**: `docgen render doc.md --format pptx --template
+  corporate.pptx` keeps the template's masters/layouts/theme and appends
+  generated slides bound to its best-matching layouts via placeholders,
+  so template typography and bullet styles apply. Placeholder geometry is
+  parsed from the layouts (with slide-size-proportional fallbacks), and
+  the template's theme minor font is stamped on body runs.
+- **PPTX diffs**: PresentationML has no native revision marks, so
+  `docgen diff old.md new.md --format pptx` renders the new revision with
+  small colored chips on changed slides (NEW/UPDATED/MOVED), a "Removed in
+  this revision" slide, and a closing revision summary.
 - **CLI**:
-  - `docgen render doc.md [-o out] [--format pdf|docx] [--template ...]`
-  - `docgen diff old.md new.md [-o out.docx] [--author A] [--date D]`
+  - `docgen render doc.md [-o out] [--format pdf|docx|pptx] [--template ...]`
+  - `docgen diff old.md new.md [-o out] [--format docx|pptx] [--author A] [--date D]`
   - `docgen diagram flow.mmd [-o out.svg|--format png]`
 
 ```bash
@@ -148,13 +168,16 @@ WASI preview1 surface is never needed.
   unmarked).
 - Merge split runs before placeholder substitution in templates.
 
-### M3 — PPTX
+### M3 — PPTX ✅ (shipped; refinements below)
 
-- Slide-oriented projection of the document model (one section per slide,
-  or a template deck with id-keyed placeholder slides).
-- Structural diff as slide-level add/remove/replace; native pptx
-  "versioning" is not dependable, so diffs will be change-marked slides +
-  a summary slide, not revision marks.
+- Speaker-notes diff channel: put per-slide change details into notes
+  slides instead of (only) the summary slide.
+- Layout-aware content overflow: shrink long bullet lists to fit instead
+  of spilling to "(cont.)" slides at a fixed line budget.
+- Template mode: honor per-placeholder font overrides from layout
+  `lstStyle` (currently one theme-wide minor font is stamped).
+- SVG images in decks (PowerPoint `svgBlip` + PNG fallback) instead of
+  PNG-only, for crisper projection.
 
 ### M4 — Excalidraw
 

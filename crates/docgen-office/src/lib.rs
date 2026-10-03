@@ -16,6 +16,9 @@ pub enum Error {
     #[error("docx generation failed: {0}")]
     Docx(String),
 
+    #[error("pptx generation failed: {0}")]
+    Pptx(String),
+
     #[error("docx template error: {0}")]
     Template(String),
 

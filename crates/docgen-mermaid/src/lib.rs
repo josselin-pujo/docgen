@@ -8,9 +8,18 @@ use docgen_core::assets::{AssetFormat, DiagramRenderer, RenderedAsset};
 use docgen_core::model::DiagramFormat;
 use docgen_core::{Error, Result};
 use merman::svg::export::RasterOptions;
+use merman::svg::{CssOverridePolicy, ScopedCssPostprocessor, SvgPipeline};
 use merman::{
     OperationControl, PngRequest, RenderOutput, RenderRequest, Renderer, SvgRequest,
 };
+
+/// merman's flowchart CSS hardcodes `opacity: 0.5` on edge-label plates
+/// (`#merman .edgeLabel rect`), parroting mermaid.js — half the edge line
+/// shows through the plate and the label reads as struck-through. This
+/// override restores a fully opaque plate and applies to both the SVG
+/// string and merman's internal raster export (the pipeline runs before
+/// finalization, so both consumers see it).
+const OPAQUE_EDGE_PLATE_CSS: &str = ".edgeLabel rect { opacity: 1 !important; }";
 
 /// How mermaid edge labels deal with the edge line passing under them.
 ///
@@ -78,7 +87,7 @@ impl MermaidRenderer {
             .render(RenderRequest::svg(
                 &self.prepare(source),
                 OperationControl::new(),
-                SvgRequest::default(),
+                self.svg_request(),
             ))
             .map_err(|e| Error::Diagram(format!("mermaid: {e}")))?;
         match output {
@@ -96,7 +105,7 @@ impl MermaidRenderer {
                 &self.prepare(source),
                 OperationControl::new(),
                 PngRequest {
-                    svg: SvgRequest::default(),
+                    svg: self.svg_request(),
                     options: RasterOptions::default(),
                 },
             ))
@@ -106,6 +115,19 @@ impl MermaidRenderer {
             _ => Err(Error::Diagram(
                 "source did not contain a recognizable Mermaid diagram".into(),
             )),
+        }
+    }
+
+    /// SVG request with the edge-plate opacity fix pipelined in.
+    fn svg_request(&self) -> SvgRequest {
+        SvgRequest {
+            pipeline: Some(
+                SvgPipeline::resvg_safe().with_postprocessor(
+                    ScopedCssPostprocessor::new(OPAQUE_EDGE_PLATE_CSS)
+                        .with_override_policy(CssOverridePolicy::StripExistingImportant),
+                ),
+            ),
+            ..SvgRequest::default()
         }
     }
 
@@ -227,5 +249,21 @@ mod tests {
         assert!(r.prepare("flowchart TD\nA-->B").starts_with("%%{init"));
         let custom = "%%{init: {\"theme\": \"dark\"}}%%\nflowchart TD\nA-->B";
         assert_eq!(r.prepare(custom), custom);
+    }
+
+    #[test]
+    fn edge_label_plates_are_opaque() {
+        // merman hardcodes opacity:0.5 on edge-label plates, which lets the
+        // edge line show through; our pipeline override must restore full
+        // opacity in the emitted CSS.
+        let r = MermaidRenderer::new();
+        let svg = r
+            .render_svg("flowchart LR\n    A[One] -->|edge label| B[Two]\n")
+            .expect("render");
+        assert!(
+            svg.contains("data-merman-postprocess=\"scoped-css\"")
+                && svg.contains(".edgeLabel rect { opacity: 1 !important;}"),
+            "edge-label plate opacity override missing from postprocessed CSS"
+        );
     }
 }

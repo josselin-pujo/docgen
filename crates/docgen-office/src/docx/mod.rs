@@ -1,11 +1,11 @@
 //! DOCX backend public API. See `document.rs` for emission and
 //! `template.rs` for template filling.
 
-mod document;
-mod package;
-mod parts;
+pub(crate) mod document;
+pub(crate) mod package;
+pub(crate) mod parts;
 mod template;
-mod xml;
+pub(crate) mod xml;
 
 use docgen_core::assets::AssetMap;
 use docgen_core::diff::{self, DiffOptions};
@@ -51,7 +51,9 @@ impl RevisionIdentity {
 /// Diagram blocks must be present in `assets` as PNG bytes.
 pub fn render_docx(doc: &Document, assets: &AssetMap) -> Result<Vec<u8>> {
     document::render(doc, assets, None).map_err(|e| match e {
-        Error::Xml(m) | Error::Zip(m) | Error::Docx(m) | Error::Template(m) => Error::Docx(m),
+        Error::Xml(m) | Error::Zip(m) | Error::Docx(m) | Error::Template(m) | Error::Pptx(m) => {
+            Error::Docx(m)
+        }
     })
 }
 
