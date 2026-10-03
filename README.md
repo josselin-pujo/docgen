@@ -95,7 +95,11 @@ roadmap item).
   feature PNGs via resvg for the office backends. Diffing is
   element-id-anchored: added/removed/changed elements with the changed
   *fields* enumerated, volatile bookkeeping ignored — surfaced as a
-  detailed Word comment when an externally-edited scene changes.
+  detailed Word comment when an externally-edited scene changes. Arrow
+  `startBinding`/`endBinding` are honored at render time (`fixedPoint`,
+  focus, gap against rectangle/ellipse/diamond perimeters), so scenes
+  edited outside the app — elements moved without updating arrow points —
+  still render with arrows attached.
 - **CLI**:
   - `docgen render doc.md [-o out] [--format pdf|docx|pptx] [--template ...]`
   - `docgen diff old.md new.md [-o out] [--format docx|pptx] [--author A] [--date D]`
@@ -197,8 +201,6 @@ WASI preview1 surface is never needed.
 - Mermaid → Excalidraw conversion (`@excalidraw/mermaid-to-excalidraw`
   in the rquickjs runtime) — still the planned approach; raw JSON input
   (shipped) is deliberately independent of it.
-- Bindings: honor arrow start/end binding geometry when bound elements
-  move (arrows currently follow their stored points only).
 - Text: rich text (per-span formatting), containers with auto-grow, and
   `frame` elements are not rendered yet.
 - Roundness fidelity for diamonds/ellipses; freedraw pressure-variable

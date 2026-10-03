@@ -130,13 +130,13 @@
   {
    "type": "rectangle",
    "id": "box-out",
-   "x": 580,
-   "y": 120,
+   "x": 640,
+   "y": 160,
    "width": 170,
    "height": 70,
    "angle": 0,
-   "strokeColor": "#c92a2a",
-   "backgroundColor": "#ffc9c9",
+   "strokeColor": "#2f9e44",
+   "backgroundColor": "#d3f9d8",
    "fillStyle": "solid",
    "strokeWidth": 2,
    "strokeStyle": "solid",
@@ -182,7 +182,7 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "PDF / DOCX\n/ PPTX / SVG",
+   "text": "PDF / DOCX\n/ PPTX",
    "fontSize": 16,
    "fontFamily": 4,
    "textAlign": "center",
@@ -228,8 +228,18 @@
     ]
    ],
    "lastCommittedPoint": null,
-   "startBinding": null,
-   "endBinding": null,
+   "startBinding": {
+    "elementId": "box-input",
+    "focus": 0,
+    "gap": 1,
+    "fixedPoint": null
+   },
+   "endBinding": {
+    "elementId": "box-core",
+    "focus": 0,
+    "gap": 1,
+    "fixedPoint": null
+   },
    "startArrowhead": null,
    "endArrowhead": "arrow"
   },
@@ -270,8 +280,18 @@
     ]
    ],
    "lastCommittedPoint": null,
-   "startBinding": null,
-   "endBinding": null,
+   "startBinding": {
+    "elementId": "box-core",
+    "focus": 0,
+    "gap": 1,
+    "fixedPoint": null
+   },
+   "endBinding": {
+    "elementId": "box-out",
+    "focus": 0,
+    "gap": 1,
+    "fixedPoint": null
+   },
    "startArrowhead": null,
    "endArrowhead": "arrow"
   },
@@ -376,8 +396,18 @@
     ]
    ],
    "lastCommittedPoint": null,
-   "startBinding": null,
-   "endBinding": null,
+   "startBinding": {
+    "elementId": "box-out",
+    "focus": 0,
+    "gap": 1,
+    "fixedPoint": null
+   },
+   "endBinding": {
+    "elementId": "dia-review",
+    "focus": 0,
+    "gap": 1,
+    "fixedPoint": null
+   },
    "startArrowhead": null,
    "endArrowhead": "arrow"
   },

@@ -10,7 +10,7 @@ use roughr::core::{FillStyle, Options, OptionsBuilder};
 use roughr::generator::Generator;
 
 use crate::fonts::Fonts;
-use crate::model::{Element, Scene};
+use crate::model::{Binding, Element, Scene};
 use crate::Result;
 
 const PAD: f64 = 8.0;
@@ -143,13 +143,14 @@ fn render_element(
         }
         "line" | "arrow" => {
             let opts = rough_options(el);
-            let pts = points_of(el);
+            let abs = anchored_points(el, scene);
+            let pts = to_points(&abs);
             if pts.len() >= 2 {
                 let drawable = generator.linear_path(&pts, false, &Some(opts.clone()));
                 emit_drawable(svg, &drawable, el);
             }
             if el.kind == "arrow" {
-                emit_arrowheads(svg, el, generator);
+                emit_arrowheads(svg, el, &abs, generator);
             }
         }
         "draw" => {
@@ -258,11 +259,124 @@ fn diamond_points(el: &Element) -> Vec<roughr::Point2D<f32>> {
     ]
 }
 
-fn points_of(el: &Element) -> Vec<roughr::Point2D<f32>> {
-    el.abs_points()
-        .into_iter()
-        .map(|(x, y)| roughr::Point2D::new(x as f32, y as f32))
+fn to_points(abs: &[(f64, f64)]) -> Vec<roughr::Point2D<f32>> {
+    abs.iter()
+        .map(|(x, y)| roughr::Point2D::new(*x as f32, *y as f32))
         .collect()
+}
+
+/// Absolute arrow/line points with both endpoints re-anchored to their
+/// bindings: scenes edited outside the app (elements moved without
+/// updating arrow points) still render connected arrows.
+fn anchored_points(el: &Element, scene: &Scene) -> Vec<(f64, f64)> {
+    let mut pts = el.abs_points();
+    if pts.is_empty() {
+        // Exporters sometimes omit points when both ends are bound;
+        // synthesize them from the bound elements' stored geometry.
+        if let (Some(sb), Some(eb)) = (&el.start_binding, &el.end_binding) {
+            let s = scene.elements.iter().find(|e| e.id == sb.element_id);
+            let e = scene.elements.iter().find(|e| e.id == eb.element_id);
+            if let (Some(s), Some(e)) = (s, e) {
+                pts = vec![s.center(), e.center()];
+            }
+        }
+        return pts;
+    }
+    if pts.len() >= 2 {
+        if let Some(b) = &el.end_binding {
+            if let Some(target) = scene.elements.iter().find(|e| e.id == b.element_id) {
+                let prev = pts[pts.len() - 2];
+                let last = *pts.last().unwrap();
+                let anchored = bind_point(b, target, last, prev);
+                *pts.last_mut().unwrap() = anchored;
+            }
+        }
+        if let Some(b) = &el.start_binding {
+            if let Some(target) = scene.elements.iter().find(|e| e.id == b.element_id) {
+                let next = pts[1];
+                let first = pts[0];
+                pts[0] = bind_point(b, target, first, next);
+            }
+        }
+    }
+    pts
+}
+
+/// Where a bound arrow endpoint attaches on `target`.
+fn bind_point(
+    binding: &Binding,
+    target: &Element,
+    stored: (f64, f64),
+    _other: (f64, f64),
+) -> (f64, f64) {
+    if let Some((fx, fy)) = binding.fixed_point {
+        return (target.x + fx * target.width, target.y + fy * target.height);
+    }
+    let gap = binding.gap.unwrap_or(1.0);
+    let mut center = target.center();
+    // `focus` displaces the ray origin perpendicular to the center->stored
+    // direction (approximation of excalidraw's edge-offset math; exact for
+    // focus = 0, which is the overwhelmingly common case).
+    if let Some(focus) = binding.focus {
+        if focus.abs() > 1e-9 {
+            let (dx, dy) = (stored.0 - center.0, stored.1 - center.1);
+            let dist = dx.hypot(dy);
+            if dist > 1e-9 {
+                let (px, py) = (-dy / dist, dx / dist);
+                let s = -focus.signum();
+                center = (
+                    center.0 + px * s * focus.abs() * dist,
+                    center.1 + py * s * focus.abs() * dist,
+                );
+            }
+        }
+    }
+    perimeter_point(target, center, stored, gap)
+}
+
+/// Point where the ray `center -> toward` crosses the target's perimeter,
+/// kept `gap` px outside it. Rectangles (and the generic fallback) use the
+/// expanded AABB, ellipses the radial solution, diamonds the |x|/a + |y|/b
+/// polygon.
+fn perimeter_point(
+    target: &Element,
+    center: (f64, f64),
+    toward: (f64, f64),
+    gap: f64,
+) -> (f64, f64) {
+    let (cx, cy) = center;
+    let (dx, dy) = (toward.0 - cx, toward.1 - cy);
+    let len = dx.hypot(dy);
+    if len < 1e-9 {
+        return toward;
+    }
+    let (ux, uy) = (dx / len, dy / len);
+    let a = target.width / 2.0 + gap;
+    let b = target.height / 2.0 + gap;
+    let t = match target.kind.as_str() {
+        "ellipse" => {
+            let denom = (ux / a) * (ux / a) + (uy / b) * (uy / b);
+            if denom < 1e-12 {
+                len
+            } else {
+                denom.sqrt().recip()
+            }
+        }
+        "diamond" => {
+            let denom = ux.abs() / a + uy.abs() / b;
+            if denom < 1e-12 {
+                len
+            } else {
+                denom.recip()
+            }
+        }
+        _ => {
+            let tx = if ux.abs() > 1e-12 { a / ux.abs() } else { f64::MAX };
+            let ty = if uy.abs() > 1e-12 { b / uy.abs() } else { f64::MAX };
+            tx.min(ty)
+        }
+    };
+    (cx + ux * t, cy + uy * t)
 }
 
 fn rounded_rect_d(x: f64, y: f64, w: f64, h: f64) -> String {
@@ -281,8 +395,12 @@ fn rounded_rect_d(x: f64, y: f64, w: f64, h: f64) -> String {
 }
 
 /// Two short sketchy strokes at each arrowhead-bearing end.
-fn emit_arrowheads(svg: &mut String, el: &Element, generator: &Generator) {
-    let pts = el.abs_points();
+fn emit_arrowheads(
+    svg: &mut String,
+    el: &Element,
+    pts: &[(f64, f64)],
+    generator: &Generator,
+) {
     if pts.len() < 2 {
         return;
     }
@@ -491,4 +609,124 @@ fn esc_color(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Binding;
+
+    fn bound_arrow(id: &str, pts: Vec<(f64, f64)>, end: Option<Binding>) -> Element {
+        let mut e: Element = serde_json::from_value(serde_json::json!({
+            "type": "arrow", "id": id, "x": 0.0, "y": 0.0,
+            "points": pts, "seed": 7
+        }))
+        .unwrap();
+        e.end_binding = end;
+        e
+    }
+
+    fn rect(id: &str, x: f64, y: f64, w: f64, h: f64) -> Element {
+        serde_json::from_value(serde_json::json!({
+            "type": "rectangle", "id": id, "x": x, "y": y,
+            "width": w, "height": h
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn binding_reanchors_to_moved_rectangle() {
+        // Arrow was drawn to the right edge of a box at x=10..200; the box
+        // was then moved to x=300 WITHOUT updating the arrow points.
+        let scene = Scene {
+            elements: vec![
+                rect("box", 300.0, 20.0, 190.0, 70.0),
+                bound_arrow(
+                    "a",
+                    vec![(220.0, 55.0), (300.0, 55.0)],
+                    Some(Binding {
+                        element_id: "box".into(),
+                        focus: None,
+                        gap: Some(0.0),
+                        fixed_point: None,
+                    }),
+                ),
+            ],
+            ..Default::default()
+        };
+        let pts = anchored_points(&scene.elements[1], &scene);
+        // End lands on the moved box's left edge, exactly.
+        assert!((pts[1].0 - 300.0).abs() < 1e-6, "got {}", pts[1].0);
+        assert!((pts[1].1 - 55.0).abs() < 1e-6);
+        // The stored (stale) start point is untouched.
+        assert_eq!(pts[0], (220.0, 55.0));
+    }
+
+    #[test]
+    fn fixed_point_pins_the_endpoint() {
+        let scene = Scene {
+            elements: vec![
+                rect("box", 100.0, 40.0, 200.0, 80.0),
+                bound_arrow(
+                    "a",
+                    vec![(0.0, 0.0), (90.0, 90.0)],
+                    Some(Binding {
+                        element_id: "box".into(),
+                        focus: None,
+                        gap: None,
+                        fixed_point: Some((0.25, 0.75)),
+                    }),
+                ),
+            ],
+            ..Default::default()
+        };
+        let pts = anchored_points(&scene.elements[1], &scene);
+        assert_eq!(pts[1], (100.0 + 0.25 * 200.0, 40.0 + 0.75 * 80.0));
+    }
+
+    #[test]
+    fn ellipse_binding_lands_on_boundary() {
+        let scene = Scene {
+            elements: vec![
+                Element {
+                    kind: "ellipse".into(),
+                    id: "e".into(),
+                    x: 400.0,
+                    y: 100.0,
+                    width: 160.0,
+                    height: 100.0,
+                    ..Default::default()
+                },
+                bound_arrow(
+                    "a",
+                    vec![(200.0, 150.0), (380.0, 150.0)],
+                    Some(Binding {
+                        element_id: "e".into(),
+                        focus: None,
+                        gap: Some(0.0),
+                        fixed_point: None,
+                    }),
+                ),
+            ],
+            ..Default::default()
+        };
+        let pts = anchored_points(&scene.elements[1], &scene);
+        // (x - cx)²/a² + (y - cy)²/b² == 1 on the boundary.
+        let (cx, cy) = (480.0, 150.0);
+        let v = (pts[1].0 - cx).powi(2) / 80f64.powi(2)
+            + (pts[1].1 - cy).powi(2) / 50f64.powi(2);
+        assert!((v - 1.0).abs() < 1e-6, "boundary value {v}");
+    }
+
+    #[test]
+    fn unbound_arrow_uses_stored_points() {
+        let scene = Scene {
+            elements: vec![bound_arrow("a", vec![(1.0, 2.0), (30.0, 40.0)], None)],
+            ..Default::default()
+        };
+        assert_eq!(
+            anchored_points(&scene.elements[0], &scene),
+            vec![(1.0, 2.0), (30.0, 40.0)]
+        );
+    }
 }

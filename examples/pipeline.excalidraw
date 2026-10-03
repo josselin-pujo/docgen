@@ -228,8 +228,18 @@
     ]
    ],
    "lastCommittedPoint": null,
-   "startBinding": null,
-   "endBinding": null,
+   "startBinding": {
+    "elementId": "box-input",
+    "focus": 0,
+    "gap": 1,
+    "fixedPoint": null
+   },
+   "endBinding": {
+    "elementId": "box-core",
+    "focus": 0,
+    "gap": 1,
+    "fixedPoint": null
+   },
    "startArrowhead": null,
    "endArrowhead": "arrow"
   },
@@ -270,8 +280,18 @@
     ]
    ],
    "lastCommittedPoint": null,
-   "startBinding": null,
-   "endBinding": null,
+   "startBinding": {
+    "elementId": "box-core",
+    "focus": 0,
+    "gap": 1,
+    "fixedPoint": null
+   },
+   "endBinding": {
+    "elementId": "box-out",
+    "focus": 0,
+    "gap": 1,
+    "fixedPoint": null
+   },
    "startArrowhead": null,
    "endArrowhead": "arrow"
   },
@@ -376,8 +396,18 @@
     ]
    ],
    "lastCommittedPoint": null,
-   "startBinding": null,
-   "endBinding": null,
+   "startBinding": {
+    "elementId": "box-out",
+    "focus": 0,
+    "gap": 1,
+    "fixedPoint": null
+   },
+   "endBinding": {
+    "elementId": "dia-review",
+    "focus": 0,
+    "gap": 1,
+    "fixedPoint": null
+   },
    "startArrowhead": null,
    "endArrowhead": "arrow"
   },

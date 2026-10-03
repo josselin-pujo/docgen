@@ -53,6 +53,25 @@ pub struct SceneFile {
     pub data_url: String,
 }
 
+/// An arrow's attachment to another element (`startBinding`/`endBinding`).
+/// Honored at render time so scenes edited outside the app (elements moved
+/// without updating arrow points) still draw connected arrows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Binding {
+    #[serde(rename = "elementId", default)]
+    pub element_id: String,
+    /// -1..=1; offsets the attachment point along the shape's edge.
+    #[serde(default)]
+    pub focus: Option<f64>,
+    /// Distance kept between the attachment and the shape's perimeter (px).
+    #[serde(default)]
+    pub gap: Option<f64>,
+    /// Normalized [0..1] coordinates within the element's bounding box;
+    /// when present the endpoint is pinned there exactly.
+    #[serde(rename = "fixedPoint", default)]
+    pub fixed_point: Option<(f64, f64)>,
+}
+
 /// One scene element. `kind` is the `"type"` discriminator; per-type
 /// fields are optional and only meaningful for their kinds.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -106,6 +125,10 @@ pub struct Element {
     pub end_arrowhead: Option<String>,
     #[serde(rename = "lastCommittedPoint", default)]
     pub last_committed_point: Option<(f64, f64)>,
+    #[serde(rename = "startBinding", default)]
+    pub start_binding: Option<Binding>,
+    #[serde(rename = "endBinding", default)]
+    pub end_binding: Option<Binding>,
     // -- text specifics ------------------------------------------------------
     #[serde(default)]
     pub text: String,
@@ -210,7 +233,9 @@ mod tests {
          "points": [[0,0],[80,0]], "strokeColor": "#1e1e1e", "strokeWidth": 1,
          "roughness": 1, "opacity": 100, "seed": 7, "endArrowhead": "arrow",
          "startArrowhead": null, "fillStyle": "hachure", "version": 1,
-         "versionNonce": 2, "isDeleted": false},
+         "versionNonce": 2, "isDeleted": false,
+         "startBinding": {"elementId": "r1", "focus": 0, "gap": 1, "fixedPoint": null},
+         "endBinding": {"elementId": "t1", "focus": -0.5, "gap": 5, "fixedPoint": [0.75, 0.5]}},
         {"type": "text", "id": "t1", "x": 30, "y": 35, "width": 60, "height": 25,
          "text": "hello\nworld", "fontSize": 20, "fontFamily": 1,
          "textAlign": "center", "verticalAlign": "middle", "containerId": "r1",
@@ -230,6 +255,15 @@ mod tests {
         assert_eq!(scene.elements[0].id, "r1");
         assert_eq!(scene.elements[0].background_color, "#a5d8ff");
         assert_eq!(scene.elements[1].end_arrowhead.as_deref(), Some("arrow"));
+        let eb = scene.elements[1].end_binding.as_ref().unwrap();
+        assert_eq!(eb.element_id, "t1");
+        assert_eq!(eb.focus, Some(-0.5));
+        assert_eq!(eb.gap, Some(5.0));
+        assert_eq!(eb.fixed_point, Some((0.75, 0.5)));
+        assert_eq!(
+            scene.elements[1].start_binding.as_ref().unwrap().element_id,
+            "r1"
+        );
         assert_eq!(scene.elements[2].text, "hello\nworld");
         assert_eq!(scene.elements[2].container_id.as_deref(), Some("r1"));
         assert_eq!(scene.app_state.view_background_color, "#ffffff");
