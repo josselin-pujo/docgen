@@ -1,0 +1,6 @@
+flowchart LR
+    MD[Markdown + frontmatter] --> Core[docgen-core model]
+    Core -->|diagram blocks| Mermaid[merman SVG]
+    Mermaid --> Typst[typst World]
+    Core --> Typst
+    Typst --> PDF[PDF bytes]

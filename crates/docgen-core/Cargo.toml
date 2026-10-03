@@ -1,0 +1,13 @@
+[package]
+name = "docgen-core"
+description = "docgen document model, markdown parsing and diff types. No I/O, wasm-compatible."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml_ng = { workspace = true }
+pulldown-cmark = { workspace = true }
+thiserror = { workspace = true }

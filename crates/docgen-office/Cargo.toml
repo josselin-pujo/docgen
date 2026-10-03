@@ -1,0 +1,10 @@
+[package]
+name = "docgen-office"
+description = "DOCX/PPTX output for docgen: OOXML zip+xml generation, templating and revision-aware diffing."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+docgen-core = { workspace = true }
+thiserror = { workspace = true }

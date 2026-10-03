@@ -1,0 +1,4 @@
+/target
+examples/*.pdf
+examples/*.svg
+examples/*.png

@@ -1,0 +1,11 @@
+[package]
+name = "docgen-mermaid"
+description = "Mermaid diagram rendering for docgen via the headless Rust `merman` engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+docgen-core = { workspace = true }
+merman = { workspace = true, features = ["png"] }
+thiserror = { workspace = true }

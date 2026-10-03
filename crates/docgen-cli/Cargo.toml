@@ -1,0 +1,18 @@
+[package]
+name = "docgen-cli"
+description = "Command-line front-end for docgen: the only place where filesystem I/O happens."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "docgen"
+path = "src/main.rs"
+
+[dependencies]
+docgen-core = { workspace = true }
+docgen-typst = { workspace = true }
+docgen-mermaid = { workspace = true }
+docgen-office = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }

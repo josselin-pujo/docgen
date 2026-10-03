@@ -1,0 +1,16 @@
+[package]
+name = "docgen-typst"
+description = "PDF rendering backend for docgen via embedded typst. In-memory, wasm-compatible."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+docgen-core = { workspace = true }
+serde_json = { workspace = true }
+typst = { workspace = true }
+typst-pdf = { workspace = true }
+typst-layout = "0.15.1"
+typst-assets = { version = "0.15.1", features = ["fonts"] }
+typst-render = { workspace = true }
+thiserror = { workspace = true }

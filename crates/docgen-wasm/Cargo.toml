@@ -1,0 +1,14 @@
+[package]
+name = "docgen-wasm"
+description = "Wasm embedding surface for docgen libraries: C-ABI probe today, WIT component next."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+docgen-core = { workspace = true }
+docgen-typst = { workspace = true }
+docgen-mermaid = { workspace = true }

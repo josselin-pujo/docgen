@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/docgen-core",
+    "crates/docgen-typst",
+    "crates/docgen-mermaid",
+    "crates/docgen-office",
+    "crates/docgen-wasm",
+    "crates/docgen-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+docgen-core = { path = "crates/docgen-core" }
+docgen-typst = { path = "crates/docgen-typst" }
+docgen-mermaid = { path = "crates/docgen-mermaid" }
+docgen-office = { path = "crates/docgen-office" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+pulldown-cmark = "0.13"
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+
+typst = "0.15.1"
+typst-pdf = "0.15.1"
+typst-render = "0.15.1"
+ecow = "0.2"
+
+merman = "0.8.0-alpha.7"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
