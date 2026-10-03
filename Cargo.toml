@@ -27,6 +27,9 @@ pulldown-cmark = "0.13"
 thiserror = "2"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+similar = "3.2"
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
+quick-xml = "0.42"
 
 typst = "0.15.1"
 typst-pdf = "0.15.1"

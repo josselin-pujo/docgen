@@ -11,7 +11,7 @@ CLI, inside CI, and in a wasm runtime (`wasm32-wasip1/2` are the supported
 targets; a browser `wasm32-unknown-unknown` build of the render core is a
 roadmap item).
 
-## Status (M1 — working today)
+## Status (M2 — working today)
 
 - **Markdown + rich YAML frontmatter** → typed document model
   (`docgen-core`): headings, paragraphs, inline styles (bold/italic/code/
@@ -19,7 +19,21 @@ roadmap item).
   code blocks.
 - **Stable block ids** — explicit `{#id}` attributes on headings and fenced
   blocks (` ```mermaid {#arch} `), heading slugs, or content hashes
-  otherwise. These are the join key for everything diff-related later.
+  otherwise. These are the join key for structural diffing.
+- **Structural diff** (`docgen-core::diff`): id-anchored classification
+  (added / removed / moved / changed), LCS interleaving of removals at their
+  old positions, word/run-level inline diffs, line/item/row-level diffs for
+  code/lists/tables, diagram source changes, and a similarity pass that
+  fuzzy-pairs edited auto-id'd paragraphs into single changes instead of
+  remove+add noise.
+- **DOCX output** (`docgen-office`): hand-rolled OOXML (zip + XML, all in
+  memory, byte-deterministic output — fixed zip timestamps, no clocks).
+  Fresh rendering with styles/numbering/tables/images, template filling,
+  and **diff rendering as native Word tracked changes**: equal content
+  flows through unmarked, deletions are `w:del`/`w:delText`, insertions
+  `w:ins`, at word/line/item/row granularity; paragraph and table-row
+  marks; anchored Word comments on moved blocks and diagram replacements;
+  revision author/date attributed deterministically.
 - **Mermaid → SVG/PNG** via [`merman`](https://github.com/Latias94/merman)
   (headless Rust Mermaid, ELK layout). Diagram sources are automatically
   forced to native SVG `<text>` labels (`htmlLabels: false`) because
@@ -44,8 +58,15 @@ roadmap item).
   See `examples/template.typ` for a worked example (title band, running
   header, page numbering). Typst errors are reported with virtual file +
   line (e.g. `docgen-meta.typ:4`).
-- **CLI**: `docgen render doc.md [-o out.pdf] [--template shell.typ]` and
-  `docgen diagram flow.mmd [-o out.svg|--format png]`.
+- **DOCX templates**: `docgen render doc.md --format docx --template
+  house-style.docx` fills any `.docx`: `{{title}}`-style placeholders from
+  frontmatter, and a `{{docgen:body}}` marker paragraph replaced by the
+  body (direct formatting — no dependency on the template's styles).
+  Diagram images are appended to `word/media/` with fresh rel ids.
+- **CLI**:
+  - `docgen render doc.md [-o out] [--format pdf|docx] [--template ...]`
+  - `docgen diff old.md new.md [-o out.docx] [--author A] [--date D]`
+  - `docgen diagram flow.mmd [-o out.svg|--format png]`
 
 ```bash
 cargo run -p docgen-cli -- render examples/sample.md   # → examples/sample.pdf
@@ -59,7 +80,7 @@ cargo run -p docgen-cli -- example-style 2>/dev/null   # (see examples/)
 | `docgen-core` | document model, markdown+frontmatter parsing, stable ids, `DiagramRenderer` trait | ✅ wasip1 |
 | `docgen-typst` | model → typst markup → PDF/PNG via in-memory `World` | ✅ wasip1 |
 | `docgen-mermaid` | `DiagramRenderer` impl backed by merman (SVG + PNG) | ✅ wasip1, ✅ unknown-unknown |
-| `docgen-office` | DOCX/PPTX output + revision-aware diff (M2) | planned |
+| `docgen-office` | DOCX output + revision-aware diff (tracked changes, comments, templates) | ✅ wasip1 |
 | `docgen-wasm` | wasm embedding surface: C-ABI probe today, WIT component in M5 | n/a |
 | `docgen-cli` | the only crate that touches the filesystem | n/a |
 
@@ -118,20 +139,14 @@ WASI preview1 surface is never needed.
 
 ## Roadmap
 
-### M2 — structural diff + DOCX (the core reason this project exists)
+### M2 — structural diff + DOCX ✅ (shipped; refinements below)
 
-- `docgen-core::diff`: id-anchored diff of two `Document`s — added/removed/
-  moved/changed blocks, plus intra-block inline diffs (`similar` crate).
-  Ids make this stable where text diffs drift.
-- `docgen-office::docx`: OOXML writer (zip + XML, all in memory). Emission
-  of documents with heading styles, real Word lists, tables, embedded
-  diagram images (PNG), and a `{placeholder}`-style template mode where a
-  `.docx` template is loaded as bytes and content regions are filled.
-- **Revision output**: the diff, rendered as native Word tracked changes —
-  `w:ins`/`w:del` with revision ids and authors, `w:moveFrom/w:moveTo` where
-  applicable — plus Word comments (`comments.xml`,
-  `commentsExtended.xml`) anchored to changed blocks via their stable ids.
-  Goal: open the output in Word/LibreOffice and accept/reject changes.
+- Word comment threading (`commentsExtended.xml`) and resolved states.
+- `w:moveFrom`/`w:moveTo` for moves (currently: comment only — Word's move
+  markup is finicky across consumers).
+- Frontmatter diff coverage (title/author changes currently render
+  unmarked).
+- Merge split runs before placeholder substitution in templates.
 
 ### M3 — PPTX
 

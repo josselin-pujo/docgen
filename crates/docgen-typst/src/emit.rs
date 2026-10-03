@@ -109,7 +109,7 @@ pub(crate) fn emit(doc: &Document, assets: &AssetMap, template: Option<&str>) ->
 fn emit_meta(doc: &Document) -> String {
     let fm = &doc.frontmatter;
     let mut out = String::from("#let meta = (\n");
-    let mut field = |key: &str, value: &serde_json::Value, out: &mut String| {
+    let field = |key: &str, value: &serde_json::Value, out: &mut String| {
         out.push_str(&format!(
             "  \"{}\": {},\n",
             esc_str(key),

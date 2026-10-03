@@ -11,6 +11,7 @@
 
 mod error;
 pub mod assets;
+pub mod diff;
 pub mod frontmatter;
 pub mod ids;
 pub mod model;

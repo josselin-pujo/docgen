@@ -18,7 +18,7 @@ mod world;
 use docgen_core::assets::AssetMap;
 use docgen_core::model::Document;
 use docgen_core::{Error, Result};
-use typst::diag::{SourceDiagnostic, Warned};
+use typst::diag::Warned;
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt};
