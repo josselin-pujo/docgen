@@ -16,6 +16,9 @@ merman = { workspace = true, features = [
     "layout-elk",
     "png",
 ] }
+# Direct dep only to name `RenderResourcePolicy` (merman doesn't re-export
+# its render crate); features arrive through merman's forwarding.
+merman-render = { workspace = true }
 thiserror = { workspace = true }
 
 [features]

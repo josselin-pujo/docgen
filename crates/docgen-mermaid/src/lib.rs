@@ -7,9 +7,12 @@
 use docgen_core::assets::{AssetFormat, DiagramRenderer, RenderedAsset};
 use docgen_core::model::DiagramFormat;
 use docgen_core::{Error, Result};
+use merman::resources::{InputResourcePolicy, ResourceProfile};
+use merman::svg::SvgEnvironment;
 use merman::svg::export::RasterOptions;
 use merman::svg::{CssOverridePolicy, ScopedCssPostprocessor, SvgPipeline};
 use merman::{OperationControl, PngRequest, RenderOutput, RenderRequest, Renderer, SvgRequest};
+use merman_render::RenderResourcePolicy;
 
 /// merman's flowchart CSS hardcodes `opacity: 0.5` on edge-label plates
 /// (`#merman .edgeLabel rect`), parroting mermaid.js — half the edge line
@@ -59,7 +62,20 @@ pub struct MermaidRenderer {
 impl Default for MermaidRenderer {
     fn default() -> Self {
         Self {
-            renderer: Renderer::new(),
+            // merman's named profiles are policy budgets calibrated to its own
+            // fixture corpus ("interactive" 800k layout work units,
+            // "trusted-native" 1M); a real 34-node column-lineage flowchart
+            // (nested subgraphs, one edge per mapped column) burned past
+            // 1.07M, so any fixed ceiling here would keep biting on larger
+            // real schemas. docgen's surfaces take author-authored
+            // documentation — merman's "unbounded-for-trusted-input" trust
+            // assumption — so the policy ceilings are disabled entirely; the
+            // hard backend caps (SVG tree nodes/depth) still bound runaway
+            // output, and accept/reject stays deterministic. A host that
+            // renders hostile input should not use this renderer as-is.
+            renderer: Renderer::new().with_resource_policy(InputResourcePolicy::for_profile(
+                ResourceProfile::UnboundedForTrustedInput,
+            )),
             raster: false,
             edge_label_background: EdgeLabelBackground::default(),
         }
@@ -73,7 +89,6 @@ impl MermaidRenderer {
 
     pub fn raster() -> Self {
         Self {
-            renderer: Renderer::new(),
             raster: true,
             ..Self::default()
         }
@@ -116,7 +131,9 @@ impl MermaidRenderer {
         }
     }
 
-    /// SVG request with the edge-plate opacity fix pipelined in.
+    /// SVG request with the edge-plate opacity fix pipelined in. The
+    /// deterministic environment carries the same unbounded-for-trusted-input
+    /// budgets as the renderer's input policy (see [`Default`]).
     fn svg_request(&self) -> SvgRequest {
         SvgRequest {
             pipeline: Some(
@@ -125,6 +142,8 @@ impl MermaidRenderer {
                         .with_override_policy(CssOverridePolicy::StripExistingImportant),
                 ),
             ),
+            environment: SvgEnvironment::deterministic()
+                .with_resource_policy(RenderResourcePolicy::unbounded_for_trusted_input()),
             ..SvgRequest::default()
         }
     }
@@ -181,6 +200,22 @@ impl DiagramRenderer for MermaidRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resource_budgets_use_unbounded_for_trusted_input() {
+        // merman's named ceilings (interactive 800k, trusted-native 1M layout
+        // work units) rejected a real column-lineage flowchart that needed
+        // more than 1.07M units; docgen renders author-authored documents, so
+        // the renderer must disable the policy ceilings entirely (hard
+        // backend caps remain). The matching render-side policy is set in
+        // `svg_request` (merman only exposes the session's effective policy
+        // internally, so only the input policy is directly assertable here).
+        let r = MermaidRenderer::new();
+        assert_eq!(
+            r.renderer.resource_policy().profile(),
+            ResourceProfile::UnboundedForTrustedInput
+        );
+    }
 
     #[test]
     fn renders_flowchart_svg() {

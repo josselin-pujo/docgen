@@ -39,6 +39,8 @@ typst-render = "0.15.1"
 ecow = "0.2"
 
 merman = { version = "0.8.0-alpha.7", default-features = false }
+# Pinned with `=` to match merman's own pin, so the two resolve to one copy.
+merman-render = { version = "=0.8.0-alpha.7", default-features = false }
 
 # Size-tuned on purpose (measured table in README "Release profile").
 # WARNING: fat LTO + codegen-units=1 make a FULL release build take 12–16
