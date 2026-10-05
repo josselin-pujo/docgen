@@ -123,39 +123,6 @@ impl Guest for Component {
             DiagramFormat::Excalidraw => docgen_excalidraw::render_source_svg(&source),
         })
     }
-
-    fn diff_docx(
-        old: String,
-        new: String,
-        author: String,
-        date: String,
-    ) -> Result<Vec<u8>, String> {
-        guard(|| {
-            let old_doc = parse_document(&old)?;
-            let new_doc = parse_document(&new)?;
-            let (m, e) = raster_renderers();
-            let old_outcome = render_diagrams_with(&old_doc, &[&m, &e])?;
-            let new_outcome = render_diagrams_with(&new_doc, &[&m, &e])?;
-            let identity = if date.is_empty() {
-                docgen_office::docx::RevisionIdentity::from_frontmatter(
-                    author,
-                    &new_doc.frontmatter,
-                )
-            } else {
-                docgen_office::docx::RevisionIdentity::new(author, date)
-            };
-            let bytes = docgen_office::docx::render_diff_docx(
-                &old_doc,
-                &new_doc,
-                &old_outcome.assets,
-                &new_outcome.assets,
-                &identity,
-            )
-            .map_err(|e| docgen_core::Error::Backend(e.to_string()))?;
-            docgen_office::docx::validate_docx(&bytes)?;
-            Ok(bytes)
-        })
-    }
 }
 
 export!(Component);

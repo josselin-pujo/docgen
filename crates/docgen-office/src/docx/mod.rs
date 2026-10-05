@@ -63,7 +63,14 @@ pub fn render_docx(doc: &Document, assets: &AssetMap) -> Result<Vec<u8>> {
 /// diagram replacements additionally get anchored Word comments.
 /// `old_assets`/`new_assets` supply PNG renders for deleted/inserted
 /// diagrams respectively.
-pub fn render_diff_docx(
+///
+/// **Parked, not public API.** The implementation works and stays covered
+/// by unit + golden tests, but it is deliberately unexposed (no CLI flag,
+/// no wasm export, no `pub` here) until bidirectional updates — how a
+/// reviewed/edited DOCX flows back into the markdown source — are designed.
+/// Re-expose once that round-trip story is settled.
+#[allow(dead_code)] // no non-test caller by design; see the park note above
+pub(crate) fn render_diff_docx(
     old: &Document,
     new: &Document,
     old_assets: &AssetMap,
@@ -94,6 +101,29 @@ mod tests {
     use docgen_core::assets::{AssetFormat, RenderedAsset};
     use docgen_core::parse_document;
     use std::collections::BTreeMap;
+
+    /// In-crate twin of `tests/golden.rs::check` for the parked diff
+    /// renderer (it is `pub(crate)`, so the integration test can't see it).
+    /// Same golden files, same hashes — regenerate with
+    /// `UPDATE_GOLDEN=1 cargo test`.
+    fn golden(name: &str, bytes: &[u8]) {
+        use sha2::{Digest, Sha256};
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/golden")
+            .join(format!("{name}.sha256"));
+        let digest: String = Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        if std::env::var("UPDATE_GOLDEN").is_ok() {
+            std::fs::write(&path, &digest).unwrap();
+            eprintln!("updated golden {name}");
+            return;
+        }
+        let expected = std::fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("golden file for {name} missing; run UPDATE_GOLDEN=1"));
+        assert_eq!(digest, expected.trim(), "{name} output changed");
+    }
 
     /// Minimal valid 1x1 white PNG.
     const TINY_PNG: &[u8] = &[
@@ -238,6 +268,22 @@ mod tests {
             comments.contains("Diagram updated"),
             "diagram comment: {comments}"
         );
+    }
+
+    #[test]
+    fn golden_diff_docx_is_byte_stable() {
+        let old = parse_document(
+            "---\ntitle: Golden\nsubtitle: fixtures\nauthors: [docgen]\n---\n\n# Head {#h}\n\nText with **bold**, _italic_, `code` and [links](https://example.com).\n\n1. first\n2. second\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```rust\nfn main() {}\n```\n",
+        )
+        .unwrap();
+        let new = parse_document(
+            "---\ntitle: Golden\nsubtitle: fixtures\nauthors: [docgen]\n---\n\n# Head {#h}\n\nText with **bold**, _italics_, `code` and [links](https://example.com) edited.\n\n1. first\n2. second\n3. inserted\n\n| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n",
+        )
+        .unwrap();
+        let identity = RevisionIdentity::new("golden", "2026-10-03T00:00:00Z");
+        let bytes =
+            render_diff_docx(&old, &new, &BTreeMap::new(), &BTreeMap::new(), &identity).unwrap();
+        golden("docx-diff", &bytes);
     }
 
     #[test]

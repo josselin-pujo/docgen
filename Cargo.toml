@@ -40,6 +40,14 @@ ecow = "0.2"
 
 merman = { version = "0.8.0-alpha.7", default-features = false }
 
+# Size-tuned on purpose (measured table in README "Release profile").
+# WARNING: fat LTO + codegen-units=1 make a FULL release build take 12–16
+# minutes (almost all of it the LTO link) — including the wasm release
+# builds. Iterate with debug builds / `cargo check`; never spin a release
+# build inside a debug loop, and don't weaken this profile to "fix" slow
+# builds — the size win is the point.
 [profile.release]
-lto = "thin"
+lto = true
+codegen-units = 1
+opt-level = "z"
 strip = "symbols"

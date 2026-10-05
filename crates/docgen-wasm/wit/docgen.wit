@@ -24,10 +24,6 @@ interface render {
 
     /// Standalone diagram source (mermaid text or excalidraw JSON) → SVG.
     render-diagram-svg: func(source: string, format: diagram-format) -> result<string, string>;
-
-    /// Two markdown revisions → DOCX with native Word tracked changes.
-    /// Empty `date` falls back to the new revision's frontmatter date.
-    diff-docx: func(old: string, new: string, author: string, date: string) -> result<list<u8>, string>;
 }
 
 world docgen {

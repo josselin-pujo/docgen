@@ -54,17 +54,6 @@ fn main() -> anyhow::Result<()> {
     anyhow::ensure!(svg.contains("<svg"), "not an SVG");
     println!("render-diagram-svg (mermaid): {} bytes", svg.len());
 
-    let diff = render.call_diff_docx(
-        &mut store,
-        "# T\n\nold text",
-        "# T\n\nnew text",
-        "runner",
-        "2026-10-03T12:00:00Z",
-    )?;
-    let diff = diff.map_err(|e| anyhow::anyhow!("diff-docx failed: {e}"))?;
-    anyhow::ensure!(diff.starts_with(b"PK"), "not a zip");
-    println!("diff-docx: {} bytes, zip magic ok", diff.len());
-
     println!("component smoke run: ALL EXPORTS OK");
     Ok(())
 }

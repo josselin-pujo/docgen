@@ -29,8 +29,6 @@ fn check(name: &str, bytes: &[u8]) {
 
 const DOC: &str = "---\ntitle: Golden\nsubtitle: fixtures\nauthors: [docgen]\n---\n\n# Head {#h}\n\nText with **bold**, _italic_, `code` and [links](https://example.com).\n\n1. first\n2. second\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```rust\nfn main() {}\n```\n";
 
-const DOC_V2: &str = "---\ntitle: Golden\nsubtitle: fixtures\nauthors: [docgen]\n---\n\n# Head {#h}\n\nText with **bold**, _italics_, `code` and [links](https://example.com) edited.\n\n1. first\n2. second\n3. inserted\n\n| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n";
-
 #[test]
 fn golden_docx() {
     let doc = docgen_core::parse_document(DOC).unwrap();
@@ -43,20 +41,4 @@ fn golden_pptx() {
     let doc = docgen_core::parse_document(DOC).unwrap();
     let bytes = docgen_office::pptx::render_pptx(&doc, &Default::default()).unwrap();
     check("pptx-fresh", &bytes);
-}
-
-#[test]
-fn golden_diff_docx() {
-    let old = docgen_core::parse_document(DOC).unwrap();
-    let new = docgen_core::parse_document(DOC_V2).unwrap();
-    let identity = docgen_office::docx::RevisionIdentity::new("golden", "2026-10-03T00:00:00Z");
-    let bytes = docgen_office::docx::render_diff_docx(
-        &old,
-        &new,
-        &Default::default(),
-        &Default::default(),
-        &identity,
-    )
-    .unwrap();
-    check("docx-diff", &bytes);
 }

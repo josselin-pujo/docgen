@@ -1,9 +1,13 @@
 //! docgen-office: OOXML output for docgen.
 //!
-//! DOCX today (M2): fresh rendering, diff rendering with **native Word
-//! tracked changes** (`w:ins`/`w:del`, revision authors/dates) plus Word
-//! comments anchored to moved/changed blocks, and template filling.
-//! PPTX is M3.
+//! DOCX today (M2): fresh rendering and template filling. The diff
+//! renderer with **native Word tracked changes** (`w:ins`/`w:del`,
+//! revision authors/dates, Word comments on moves/diagram changes) is
+//! implemented and tested but **parked**: it has no public surface (CLI,
+//! wasm, this crate) until bidirectional updates — how a reviewed DOCX
+//! flows back into the markdown source — are designed. See the park note
+//! on `docx::render_diff_docx`. PPTX (M3) exposes fresh render, template
+//! filling and revision-summary diff decks.
 //!
 //! Everything is in-memory: templates and outputs are byte buffers. Zip
 //! entries carry fixed timestamps so output is byte-stable across runs.

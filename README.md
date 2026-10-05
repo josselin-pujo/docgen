@@ -2,7 +2,8 @@
 
 A single-binary documentation renderer and differ, written in Rust. Markdown
 in; PDF, DOCX and PPTX out; diagrams rendered natively; diffs expressed in the
-target format's own revision machinery (Word tracked changes, ...) instead of
+target format's own revision machinery (today: PPTX revision decks — the DOCX
+tracked-changes diff is implemented but parked, see the roadmap) instead of
 side-by-side approximations.
 
 The libraries are strictly **in-memory**: strings and byte buffers in, owned
@@ -28,12 +29,12 @@ roadmap item).
   remove+add noise.
 - **DOCX output** (`docgen-office`): hand-rolled OOXML (zip + XML, all in
   memory, byte-deterministic output — fixed zip timestamps, no clocks).
-  Fresh rendering with styles/numbering/tables/images, template filling,
-  and **diff rendering as native Word tracked changes**: equal content
-  flows through unmarked, deletions are `w:del`/`w:delText`, insertions
-  `w:ins`, at word/line/item/row granularity; paragraph and table-row
-  marks; anchored Word comments on moved blocks and diagram replacements;
-  revision author/date attributed deterministically.
+  Fresh rendering with styles/numbering/tables/images and template filling.
+  Diff rendering as native Word tracked changes is implemented and tested
+  (equal content unmarked, deletions `w:del`/`w:delText`, insertions
+  `w:ins` at word/line/item/row granularity, anchored comments on moves
+  and diagram replacements) but **parked behind no public surface** until
+  bidirectional updates are designed — see the roadmap.
 - **Mermaid → SVG/PNG** via [`merman`](https://github.com/Latias94/merman)
   (headless Rust Mermaid, ELK layout). Diagram sources are automatically
   forced to native SVG `<text>` labels (`htmlLabels: false`) because
@@ -101,10 +102,10 @@ roadmap item).
   edited outside the app — elements moved without updating arrow points —
   still render with arrows attached.
 - **Wasm component** (`docgen-wasm`): the whole pipeline — parse,
-  mermaid + excalidraw diagrams, typst PDF, DOCX/PPTX writers, diff — is
+  mermaid + excalidraw diagrams, typst PDF, DOCX/PPTX writers — is
   exported through a WIT world (`crates/docgen-wasm/wit/docgen.wit`:
   `render-pdf`, `render-docx`, `render-pptx`, `render-diagram-svg`,
-  `diff-docx`, `version`) that **imports nothing**. Build the core module
+  `version`) that **imports nothing**. Build the core module
   for `wasm32-unknown-unknown` (zero host imports — merman's katex chain
   is feature-gated off for this crate only, and `getrandom` gets a
   deterministic custom backend) and componentize with
@@ -114,7 +115,7 @@ roadmap item).
   builds; outputs are pinned by golden SHA-256 tests per crate.
 - **CLI**:
   - `docgen render doc.md [-o out] [--format pdf|docx|pptx] [--template ...]`
-  - `docgen diff old.md new.md [-o out] [--format docx|pptx] [--author A] [--date D]`
+  - `docgen diff old.md new.md [-o out] [--format pptx] [--author A] [--date D]`
   - `docgen diagram flow.mmd | scene.excalidraw [-o out.svg|--format png]`
 
 ```bash
@@ -129,9 +130,34 @@ cargo run -p docgen-cli -- example-style 2>/dev/null   # (see examples/)
 | `docgen-core` | document model, markdown+frontmatter parsing, stable ids, `DiagramRenderer` trait | ✅ wasip1 |
 | `docgen-typst` | model → typst markup → PDF/PNG via in-memory `World` | ✅ wasip1 |
 | `docgen-mermaid` | `DiagramRenderer` impl backed by merman (SVG + PNG) | ✅ wasip1, ✅ unknown-unknown |
-| `docgen-office` | DOCX output + revision-aware diff (tracked changes, comments, templates) | ✅ wasip1 |
+| `docgen-office` | DOCX/PPTX output + templates; pptx revision decks; docx tracked-changes diff parked (tested, unexposed) | ✅ wasip1 |
 | `docgen-wasm` | WIT component exporting every renderer; imports nothing | ✅ unknown-unknown |
 | `docgen-cli` | the only crate that touches the filesystem | n/a |
+
+## Release profile (measured, 2026-10)
+
+Host binary (`docgen.exe`, all engines + fonts statically linked), one
+variable at a time:
+
+| Config | Size | Δ |
+|---|---|---|
+| thin LTO, `strip="symbols"` (old default) | 79,483,904 B | — |
+| — `strip="none"` | 79,403,008 B | strip is a no-op on PE (~0.1%, noise) |
+| fat LTO + `codegen-units=1` + strip | 73,014,272 B | −8.1% |
+| + `opt-level="z"` | **54,558,720 B** | −25.3% more (−31% total) |
+
+So the shipped profile is `lto = true`, `codegen-units = 1`,
+`opt-level = "z"`, `strip = "symbols"`: `z` clears a 10%-worth-it bar with
+room to spare. The size is dominated by code + embedded font assets, not
+symbols — stripping was already configured and buys nothing on Windows.
+
+**Build-time cost (important):** fat LTO + one codegen unit mean a full
+release build — including the wasm release builds — takes **12–16
+minutes**, almost all of it the LTO link, vs seconds for `cargo check`.
+Iterate with debug builds; only build release when size is the actual
+deliverable. `z` also trades runtime speed for size; revisit if typst
+compile latency ever matters interactively. The wasm cdylib shares this
+profile and shrinks with it.
 
 ## How IOless is the wasm story, really?
 
@@ -190,6 +216,16 @@ WASI preview1 surface is never needed.
 
 ### M2 — structural diff + DOCX ✅ (shipped; refinements below)
 
+**Parked:** the DOCX tracked-changes diff (`docgen-office`'s
+`render_diff_docx` + `document::RevisionMode`) is implemented, unit- and
+golden-tested, but has no CLI flag, no wasm export and no public library
+entry point. It comes back once **bidirectional updates** are designed —
+how a DOCX that was reviewed in Word (changes accepted/rejected, comments
+resolved) flows back into the markdown source, instead of the current
+one-way markdown → DOCX trip. Exposing the one-way output first would
+risk locking in an API/UX the round trip can't honor.
+
+- Bidirectional update design (the unexposure condition above).
 - Word comment threading (`commentsExtended.xml`) and resolved states.
 - `w:moveFrom`/`w:moveTo` for moves (currently: comment only — Word's move
   markup is finicky across consumers).

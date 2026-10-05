@@ -38,19 +38,21 @@ enum Command {
         #[arg(short, long)]
         template: Option<PathBuf>,
     },
-    /// Diff two revisions of a markdown document into a DOCX with native
-    /// Word tracked changes (w:ins/w:del) and comments on moves/diagrams,
-    /// or a PPTX with revision chips and a summary slide.
+    /// Diff two revisions of a markdown document into a PPTX with
+    /// revision chips on changed slides, a "removed in this revision"
+    /// slide and a revision summary. (A DOCX tracked-changes diff exists
+    /// in the libraries but is parked pending bidirectional-update
+    /// design.)
     Diff {
         /// The old revision.
         old: PathBuf,
         /// The new revision.
         new: PathBuf,
-        /// Output file; defaults to <new>.diff.docx / <new>.diff.pptx.
+        /// Output file; defaults to <new>.diff.pptx.
         #[arg(short, long)]
         out: Option<PathBuf>,
-        /// Output format (docx or pptx).
-        #[arg(short, long, default_value = "docx")]
+        /// Output format (pptx).
+        #[arg(short, long, default_value = "pptx")]
         format: String,
         /// Author attributed to the tracked changes.
         #[arg(short, long, default_value = "docgen")]
@@ -216,20 +218,6 @@ fn diff(
     };
 
     match format.to_ascii_lowercase().as_str() {
-        "docx" => {
-            let bytes = docgen_office::docx::render_diff_docx(
-                &old,
-                &new,
-                &old_outcome.assets,
-                &new_outcome.assets,
-                &identity,
-            )
-            .context("rendering diff docx")?;
-            docgen_office::docx::validate_docx(&bytes).context("validating docx")?;
-            let out = out.unwrap_or_else(|| with_extension(&new_path, "diff.docx"));
-            std::fs::write(&out, bytes).with_context(|| format!("writing {}", out.display()))?;
-            println!("wrote {}", out.display());
-        }
         "pptx" => {
             let bytes = docgen_office::pptx::render_diff_pptx(
                 &old,
@@ -244,7 +232,10 @@ fn diff(
             std::fs::write(&out, bytes).with_context(|| format!("writing {}", out.display()))?;
             println!("wrote {}", out.display());
         }
-        other => bail!("unsupported diff format {other:?} (use docx or pptx)"),
+        "docx" => bail!(
+            "docx diff output is parked pending bidirectional-update design; use --format pptx"
+        ),
+        other => bail!("unsupported diff format {other:?} (use pptx)"),
     }
     Ok(())
 }
