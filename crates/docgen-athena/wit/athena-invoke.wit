@@ -1,0 +1,42 @@
+/// docgen as an Athena tool component: package `athena:tool@0.1.0`, world
+/// `athena-invoke` — one `run` export, zero imports.
+///
+/// The host never bindgen's this world: it introspects the component's
+/// actual WIT types and invokes through the dynamic component API. The
+/// broker passes plain JS values (blob positions as `{ref}`), the host
+/// fills/mints the holders at the seam.
+package athena:tool@0.1.0;
+
+world athena-invoke {
+    /// The pinned blob holder. Inbound: the host derefs `ref` and fills
+    /// `data` before `run`. Outbound: leave `ref` empty — the host
+    /// captures `data`, mints a content-addressed blob, and overwrites
+    /// `ref` with its digest.
+    record blob {
+        ref: string,
+        data: list<u8>,
+    }
+
+    record tool-error {
+        message: string,
+        code: option<string>,
+    }
+
+    record invoke-input {
+        /// "render" (markdown → document) or "diagram" (mermaid/excalidraw source → image).
+        action: string,
+        /// render: "pdf" | "docx" | "pptx"; diagram: "svg" | "png".
+        format: string,
+        /// diagrams only: "mermaid" | "excalidraw"; empty for render.
+        kind: string,
+        /// The source text; the host derefs the incoming ref into `data`.
+        content: blob,
+    }
+
+    record invoke-output {
+        /// The rendered bytes; `ref` is minted host-side.
+        artifact: blob,
+    }
+
+    export run: func(input: invoke-input) -> result<invoke-output, tool-error>;
+}

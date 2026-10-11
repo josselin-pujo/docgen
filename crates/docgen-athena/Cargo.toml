@@ -1,0 +1,27 @@
+[package]
+name = "docgen-athena"
+description = "Athena tool component for docgen: `athena:tool@0.1.0` / world `athena-invoke`, zero imports."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+docgen-core = { workspace = true }
+docgen-typst = { workspace = true }
+# default-features off drops merman's math (katex) chain — the only source
+# of wasm-bindgen host imports — so the module truly imports nothing.
+docgen-mermaid = { workspace = true, default-features = false }
+docgen-office = { workspace = true }
+docgen-excalidraw = { workspace = true, features = ["raster"] }
+wit-bindgen = "0.62"
+# Custom backend for wasm32-unknown-unknown: deterministic stub instead of
+# host entropy, so the module keeps importing nothing.
+getrandom = { version = "0.2", features = ["custom"] }
+
+[dev-dependencies]
+wasmparser = "0.246"
+wasmtime = "48"
+anyhow = "1"

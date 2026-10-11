@@ -67,6 +67,29 @@ jobs:
           wasm-tools validate target/docgen.wasm
           wasm-tools component wit target/docgen.wasm
 
+  athena-component:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-tools
+      - name: Build the zero-import core module
+        run: cargo build --release --target wasm32-unknown-unknown -p docgen-athena
+      - name: Componentize and validate
+        run: |
+          wasm-tools component new \
+            target/wasm32-unknown-unknown/release/docgen_athena.wasm \
+            -o target/docgen-athena.component.wasm
+          wasm-tools validate target/docgen-athena.component.wasm
+          wasm-tools component wit target/docgen-athena.component.wasm
+      - name: Import-surface assertions
+        run: cargo test -p docgen-athena --test imports
+
   fuzz:
     runs-on: ubuntu-latest
     continue-on-error: true
