@@ -1,7 +1,7 @@
-// Node smoke tests for the docgen broker. The host-injected `Athena`
-// global is faked (per the skill's testing note); the broker source is
-// loaded as a script with the stub in scope, and its handler is driven
-// directly. Run: `node --test crates/docgen-athena/plugin/test/`.
+// Node smoke tests for the docgen FOUNDATION broker (blob-native, no fs).
+// The host-injected `Athena` global is faked; the broker source is loaded as
+// a script with the stub in scope, and its handler is driven directly.
+// Run: `node --test crates/docgen-athena/plugin/test/broker.test.mjs`.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -12,37 +12,24 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(path.join(here, "..", "broker.js"), "utf8");
 
+const REF = "sha256:" + "a".repeat(64);
+const ARTIFACT = "sha256:" + "b".repeat(64);
+
 // Cross-realm-safe plain-data comparison.
 const norm = (x) => JSON.parse(JSON.stringify(x));
 
 function loadBroker(opts = {}) {
-  const calls = { readBlob: [], read: [], writeBlob: [], put: [], invoke: [], toolInvoke: [] };
+  const calls = { put: [], invoke: [], toolInvoke: [] };
   const stubs = opts.stubs || {};
 
   globalThis.Athena = {
     serve(h) {
       loadBroker.handler = h;
     },
-    fs: {
-      readBlob(p) {
-        calls.readBlob.push(p);
-        if (stubs.readBlob) return stubs.readBlob(p);
-        return "sha256:file";
-      },
-      read(p) {
-        calls.read.push(p);
-        if (stubs.read) return stubs.read(p);
-        throw new Error("no fs.read stub");
-      },
-      writeBlob(p, d) {
-        calls.writeBlob.push([p, d]);
-        if (stubs.writeBlob) return stubs.writeBlob(p, d);
-      },
-    },
     blob: {
-      put(b, ttl) {
+      put(b) {
         calls.put.push(b);
-        if (stubs.blobPut) return stubs.blobPut(b, ttl);
+        if (stubs.blobPut) return stubs.blobPut(b);
         return "sha256:inline";
       },
     },
@@ -50,7 +37,7 @@ function loadBroker(opts = {}) {
       invoke(tool, input) {
         calls.invoke.push([tool, input]);
         if (stubs.wasmInvoke) return stubs.wasmInvoke(tool, input);
-        return { ok: { artifact: { ref: "sha256:artifact" } } };
+        return { ok: { artifact: { ref: ARTIFACT }, warnings: [] } };
       },
     },
     tool: {
@@ -60,7 +47,6 @@ function loadBroker(opts = {}) {
         return { ok: true, output: "ok" };
       },
     },
-    caps: { list: () => [] },
   };
   globalThis.__athenaManifest = opts.manifest || { config: {} };
 
@@ -72,112 +58,117 @@ function loadBroker(opts = {}) {
 const invoke = (handler, args, callKey = "c1") =>
   handler({ op: "invoke", tool: "docgen_compose", callKey, args });
 
-test("specs: exactly one docgen_compose ToolSpec with a JSON-Schema object", () => {
+test("specs: exactly one docgen_compose ToolSpec", () => {
   const { handler } = loadBroker();
   const r = handler({ op: "specs" });
   assert.equal(r.specs.length, 1);
   const s = r.specs[0];
   assert.equal(s.name, "docgen_compose");
   assert.equal(typeof s.description, "string");
-  assert.equal(s.parameters.type, "object");
   assert.deepEqual(s.parameters.required, ["action", "format"]);
-  assert.ok(s.parameters.properties.action && s.parameters.properties.format);
+  assert.ok(s.parameters.properties.content && s.parameters.properties.source);
+  assert.ok(s.parameters.properties.assets);
 });
 
-test("sections: empty list", () => {
+test("sections: empty list; unknown ops answer honestly", () => {
   const { handler } = loadBroker();
   assert.deepEqual(handler({ op: "sections" }), { sections: [] });
+  assert.equal(handler({ op: "wat" }).output, "unknown op: wat");
 });
 
-test("unknown ops answer honestly", () => {
-  const { handler } = loadBroker();
-  const r = handler({ op: "wat" });
-  assert.equal(r.ok, false);
-  assert.equal(r.output, "unknown op: wat");
-});
-
-test("render from a workspace file: readBlob → wasm → writeBlob → surface", () => {
+test("inline content: blob.put once, ref rides into the component", () => {
   const { handler, calls } = loadBroker();
-  const r = invoke(handler, { action: "render", format: "pdf", source: "docs/doc.md" });
+  const r = invoke(handler, { action: "render", format: "pdf", content: "# Hi" });
   assert.equal(r.ok, true);
-  assert.match(r.output, /^wrote docs\/doc\.pdf \(pdf\)/);
-  assert.match(r.output, /sha256:artifact/);
-
-  assert.deepEqual(calls.readBlob, ["docs/doc.md"]);
+  assert.match(r.output, /^rendered pdf/);
+  assert.match(r.output, new RegExp(ARTIFACT));
+  assert.match(r.output, /surfaced as a media card/);
+  assert.equal(calls.put.length, 1);
+  assert.equal(Buffer.from(calls.put[0]).toString(), "# Hi");
   const [tool, input] = calls.invoke[0];
   assert.equal(tool, "docgen_compose");
   assert.deepEqual(norm(input), {
     action: "render",
     format: "pdf",
     kind: "",
-    content: { ref: "sha256:file" },
+    content: { ref: "sha256:inline" },
+    assets: [],
   });
-  assert.deepEqual(norm(calls.writeBlob), [["docs/doc.pdf", "sha256:artifact"]]);
   assert.deepEqual(norm(calls.toolInvoke[0]), [
     "c1:surface",
     "load_artifact",
-    { digest: "sha256:artifact" },
+    { digest: ARTIFACT },
   ]);
 });
 
-test("inline content: blob.put once, default out name", () => {
+test("source ref: passed through without minting, no fs anywhere", () => {
   const { handler, calls } = loadBroker();
-  const r = invoke(handler, { action: "render", format: "docx", content: "# Hi" });
+  const r = invoke(handler, { action: "render", format: "docx", source: { ref: REF } });
   assert.equal(r.ok, true);
-  assert.match(r.output, /^wrote document\.docx \(docx\)/);
-  assert.equal(calls.put.length, 1);
-  assert.equal(Buffer.from(calls.put[0]).toString(), "# Hi");
-  assert.deepEqual(norm(calls.invoke[0][1].content), { ref: "sha256:inline" });
-  assert.deepEqual(calls.readBlob, []);
+  assert.equal(calls.put.length, 0);
+  assert.deepEqual(norm(calls.invoke[0][1].content), { ref: REF });
 });
 
-test("diagram kind inference: mermaid text, excalidraw JSON, extension, explicit wins", () => {
-  const m1 = loadBroker();
-  const r1 = invoke(m1.handler, { action: "diagram", format: "svg", content: "flowchart LR\nA-->B" });
-  assert.equal(r1.ok, true);
-  assert.equal(m1.calls.invoke[0][1].kind, "mermaid");
-  assert.match(r1.output, /^wrote diagram\.svg/);
+test("source ref validation is strict", () => {
+  const { handler } = loadBroker();
+  assert.match(invoke(handler, { action: "render", format: "pdf", source: { ref: "nope" } }).output, /blob digest/);
+  assert.match(invoke(handler, { action: "render", format: "pdf", source: {} }).output, /blob digest/);
+});
 
-  const m2 = loadBroker();
-  const r2 = invoke(m2.handler, {
-    action: "diagram",
-    format: "png",
-    content: '{"type":"excalidraw","elements":[]}',
+test("exactly one of content / source", () => {
+  const { handler } = loadBroker();
+  assert.match(invoke(handler, { action: "render", format: "pdf" }).output, /exactly one of/);
+  assert.match(
+    invoke(handler, { action: "render", format: "pdf", content: "x", source: { ref: REF } }).output,
+    /not both/,
+  );
+});
+
+test("assets map to the component's {name, image:{ref}} list", () => {
+  const { handler, calls } = loadBroker();
+  const r = invoke(handler, {
+    action: "render",
+    format: "pdf",
+    content: "![x](img/x.png)",
+    assets: [{ name: "img/x.png", ref: REF }],
   });
-  assert.equal(r2.ok, true);
-  assert.equal(m2.calls.invoke[0][1].kind, "excalidraw");
+  assert.equal(r.ok, true);
+  assert.deepEqual(norm(calls.invoke[0][1].assets), [
+    { name: "img/x.png", image: { ref: REF } },
+  ]);
+});
 
-  const m3 = loadBroker();
-  invoke(m3.handler, { action: "diagram", format: "svg", source: "scene.excalidraw" });
-  assert.equal(m3.calls.invoke[0][1].kind, "excalidraw");
+test("asset validation is strict", () => {
+  const { handler } = loadBroker();
+  assert.match(
+    invoke(handler, { action: "render", format: "pdf", content: "x", assets: "nope" }).output,
+    /array of/,
+  );
+  assert.match(
+    invoke(handler, { action: "render", format: "pdf", content: "x", assets: [{ name: "a", ref: "x" }] }).output,
+    /each asset needs/,
+  );
+});
 
-  const m4 = loadBroker({
-    stubs: { read: () => new TextEncoder().encode("flowchart TD\nX-->Y") },
+test("component warnings ride the output", () => {
+  const { handler } = loadBroker({
+    stubs: {
+      wasmInvoke: () => ({
+        ok: { artifact: { ref: ARTIFACT }, warnings: ["image img/gone.png: no bytes provided — rendered as a visible placeholder"] },
+      }),
+    },
   });
-  invoke(m4.handler, { action: "diagram", format: "svg", source: "weird.bin" });
-  assert.equal(m4.calls.invoke[0][1].kind, "mermaid");
-
-  const m5 = loadBroker();
-  invoke(m5.handler, {
-    action: "diagram",
-    format: "svg",
-    content: "flowchart LR",
-    kind: "excalidraw",
-  });
-  assert.equal(m5.calls.invoke[0][1].kind, "excalidraw");
+  const r = invoke(handler, { action: "render", format: "pdf", content: "x" });
+  assert.equal(r.ok, true);
+  assert.match(r.output, /warnings:/);
+  assert.match(r.output, /img\/gone\.png/);
 });
 
 test("argument refusals are honest prose", () => {
   const { handler } = loadBroker();
-  assert.match(invoke(handler, { action: "render", format: "pdf" }).output, /exactly one of/);
-  assert.match(
-    invoke(handler, { action: "render", format: "pdf", source: "a.md", content: "x" }).output,
-    /not both/,
-  );
   assert.match(invoke(handler, { action: "paint", format: "pdf", content: "x" }).output, /render.*diagram/);
   assert.match(invoke(handler, { action: "render", format: "svg", content: "x" }).output, /pdf, docx, pptx/);
-  const { handler: h2 } = loadBroker();
-  assert.match(invoke(h2, { action: "diagram", format: "svg", source: "x.bin" }).output, /kind/);
+  assert.match(invoke(handler, { action: "diagram", format: "docx", content: "x" }).output, /svg, png/);
 });
 
 test("wasm error envelope becomes readable failure", () => {
@@ -192,21 +183,6 @@ test("wasm error envelope becomes readable failure", () => {
   assert.match(r.output, /wall clock exceeded/);
 });
 
-test("writeBlob refusal keeps the digest and fails honestly", () => {
-  const { handler } = loadBroker({
-    stubs: {
-      writeBlob: () => {
-        throw new Error("fs.write refused: missing grant fs.write=docgen");
-      },
-    },
-  });
-  const r = invoke(handler, { action: "render", format: "pdf", content: "x" });
-  assert.equal(r.ok, false);
-  assert.match(r.output, /could not write document\.pdf/);
-  assert.match(r.output, /fs\.write refused/);
-  assert.match(r.output, /sha256:artifact/);
-});
-
 test("surfacing is best-effort: its failure never fails the tool", () => {
   const { handler } = loadBroker({
     stubs: {
@@ -217,28 +193,17 @@ test("surfacing is best-effort: its failure never fails the tool", () => {
   });
   const r = invoke(handler, { action: "render", format: "pdf", content: "x" });
   assert.equal(r.ok, true);
+  assert.doesNotMatch(r.output, /surfaced as a media card/);
 });
 
-test("source read refusal fails with the readable prose", () => {
-  const { handler } = loadBroker({
-    stubs: {
-      readBlob: () => {
-        throw new Error('no such workspace file: "nope.md"');
-      },
-    },
-  });
-  const r = invoke(handler, { action: "render", format: "pdf", source: "nope.md" });
-  assert.equal(r.ok, false);
-  assert.match(r.output, /no such workspace file/);
-});
+test("surface=false via config and via args skips surfacing", () => {
+  const byConfig = loadBroker({ manifest: { config: { surface: false, debug: true } } });
+  invoke(byConfig.handler, { action: "render", format: "pdf", content: "x" });
+  assert.equal(byConfig.calls.toolInvoke.length, 0);
 
-test("config: surface=false skips surfacing, debug is tolerated", () => {
-  const { handler, calls } = loadBroker({
-    manifest: { config: { surface: false, debug: true } },
-  });
-  const r = invoke(handler, { action: "render", format: "pdf", content: "x" });
-  assert.equal(r.ok, true);
-  assert.equal(calls.toolInvoke.length, 0);
+  const byArgs = loadBroker();
+  invoke(byArgs.handler, { action: "render", format: "pdf", content: "x", surface: false });
+  assert.equal(byArgs.calls.toolInvoke.length, 0);
 });
 
 test("config may arrive as a JSON string (parse-once discipline)", () => {

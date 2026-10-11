@@ -2,9 +2,9 @@
 //! `athena-invoke` — one `run` export, zero imports.
 //!
 //! The source rides in as a host-filled blob holder (the broker derefs a
-//! workspace file or blob-puts inline content), the artifact rides out as
-//! a host-minted holder (the broker materializes it with `fs.writeBlob`).
-//! Argument validation and fs delivery live in the broker; this module is
+//! workspace file or blob-puts inline content), image assets ride in as
+//! named holder lists, and the artifact rides out as a host-minted holder.
+//! Argument validation and delivery live in the brokers; this module is
 //! pure compute.
 //!
 //! Build (core module, zero imports — same recipe as `docgen-wasm`):
@@ -44,7 +44,7 @@ fn deterministic_random(buf: &mut [u8]) -> Result<(), getrandom::Error> {
 
 getrandom::register_custom_getrandom!(deterministic_random);
 
-use docgen_core::assets::render_diagrams_with;
+use docgen_core::assets::{AssetFormat, AssetMap, RenderedAsset, render_diagrams_with};
 use docgen_core::parse_document;
 use docgen_excalidraw::ExcalidrawRenderer;
 use docgen_mermaid::MermaidRenderer;
@@ -81,31 +81,49 @@ fn guard<T>(
         .and_then(|r| r.map_err(|e| tool_err(e.to_string(), "render-failed")))
 }
 
-fn render_document(source: &str, format: &str) -> docgen_core::Result<Vec<u8>> {
+fn render_document(
+    source: &str,
+    format: &str,
+    mut assets: AssetMap,
+) -> docgen_core::Result<(Vec<u8>, Vec<String>)> {
     let doc = parse_document(source)?;
+    let mut warnings: Vec<String> = Vec::new();
+    for url in doc.image_urls() {
+        if !assets.contains_key(&url) {
+            warnings.push(format!(
+                "image {url}: no bytes provided — rendered as a visible placeholder"
+            ));
+        }
+    }
     match format {
         "pdf" => {
             let (m, e) = (MermaidRenderer::new(), ExcalidrawRenderer::new());
             let outcome = render_diagrams_with(&doc, &[&m, &e])?;
-            let (pdf, _warnings) =
-                TypstRenderer::new_embedded().render_pdf(&doc, &outcome.assets)?;
-            Ok(pdf)
+            warnings.extend(skipped_warnings(&outcome.skipped));
+            assets.extend(outcome.assets);
+            let (pdf, typst_warnings) = TypstRenderer::new_embedded().render_pdf(&doc, &assets)?;
+            warnings.extend(typst_warnings);
+            Ok((pdf, warnings))
         }
         "docx" => {
             let (m, e) = (MermaidRenderer::raster(), ExcalidrawRenderer::raster());
             let outcome = render_diagrams_with(&doc, &[&m, &e])?;
-            let bytes = docgen_office::docx::render_docx(&doc, &outcome.assets)
+            warnings.extend(skipped_warnings(&outcome.skipped));
+            assets.extend(outcome.assets);
+            let bytes = docgen_office::docx::render_docx(&doc, &assets)
                 .map_err(|e| docgen_core::Error::Backend(e.to_string()))?;
             docgen_office::docx::validate_docx(&bytes)?;
-            Ok(bytes)
+            Ok((bytes, warnings))
         }
         "pptx" => {
             let (m, e) = (MermaidRenderer::raster(), ExcalidrawRenderer::raster());
             let outcome = render_diagrams_with(&doc, &[&m, &e])?;
-            let bytes = docgen_office::pptx::render_pptx(&doc, &outcome.assets)
+            warnings.extend(skipped_warnings(&outcome.skipped));
+            assets.extend(outcome.assets);
+            let bytes = docgen_office::pptx::render_pptx(&doc, &assets)
                 .map_err(|e| docgen_core::Error::Backend(e.to_string()))?;
             docgen_office::pptx::validate_pptx(&bytes)?;
-            Ok(bytes)
+            Ok((bytes, warnings))
         }
         // `run` validates the pair before calling; keep an honest error
         // rather than unreachable!/panic (a trap would quarantine).
@@ -115,16 +133,51 @@ fn render_document(source: &str, format: &str) -> docgen_core::Result<Vec<u8>> {
     }
 }
 
-fn render_diagram(source: &str, kind: &str, format: &str) -> docgen_core::Result<Vec<u8>> {
-    match (kind, format) {
-        ("mermaid", "svg") => Ok(MermaidRenderer::new().render_svg(source)?.into_bytes()),
+fn skipped_warnings(skipped: &[String]) -> Vec<String> {
+    skipped
+        .iter()
+        .map(|s| format!("diagram {s}: no renderer available — placeholder emitted"))
+        .collect()
+}
+
+fn render_diagram(
+    source: &str,
+    kind: &str,
+    format: &str,
+) -> docgen_core::Result<(Vec<u8>, Vec<String>)> {
+    // Empty kind: infer exactly like the CLI (excalidraw JSON vs mermaid).
+    let kind = if kind.is_empty() {
+        detect_kind(source)
+    } else {
+        kind
+    };
+    let bytes = match (kind, format) {
+        ("mermaid", "svg") => MermaidRenderer::new()
+            .render_svg(source)
+            .map(String::into_bytes),
         ("mermaid", "png") => MermaidRenderer::new().render_png(source),
-        ("excalidraw", "svg") => Ok(docgen_excalidraw::render_source_svg(source)?.into_bytes()),
+        ("excalidraw", "svg") => {
+            docgen_excalidraw::render_source_svg(source).map(String::into_bytes)
+        }
         ("excalidraw", "png") => docgen_excalidraw::render_source_png(source),
         other => Err(docgen_core::Error::Backend(format!(
             "unsupported diagram kind/format {other:?} \
              (kind: mermaid, excalidraw; format: svg, png)"
         ))),
+    }?;
+    Ok((bytes, Vec::new()))
+}
+
+/// Mirrors the CLI's detection: JSON objects mentioning `elements` (or an
+/// excalidraw `type`) are excalidraw; everything else is mermaid.
+fn detect_kind(source: &str) -> &'static str {
+    let trimmed = source.trim_start();
+    if trimmed.starts_with('{')
+        && (source.contains("\"elements\"") || source.contains("\"type\": \"excalidraw\""))
+    {
+        "excalidraw"
+    } else {
+        "mermaid"
     }
 }
 
@@ -150,19 +203,37 @@ impl Guest for Component {
                 )));
             }
         }
-        if input.action == "diagram" && !matches!(input.kind.as_str(), "mermaid" | "excalidraw") {
+        if input.action == "diagram"
+            && !matches!(input.kind.as_str(), "" | "mermaid" | "excalidraw")
+        {
             return Err(bad_args(format!(
-                "diagram: unknown kind {:?} (use mermaid or excalidraw)",
+                "diagram: unknown kind {:?} (use mermaid or excalidraw, or omit to infer)",
                 input.kind
             )));
         }
         let source = String::from_utf8(input.content.data)
             .map_err(|_| bad_args("source is not valid UTF-8".to_string()))?;
+        let mut assets = AssetMap::new();
+        for asset in &input.assets {
+            let format = AssetFormat::from_bytes(&asset.image.data).ok_or_else(|| {
+                bad_args(format!(
+                    "asset {:?}: unrecognized image format (png/jpeg/gif/svg)",
+                    asset.name
+                ))
+            })?;
+            assets.insert(
+                asset.name.clone(),
+                RenderedAsset {
+                    format,
+                    bytes: asset.image.data.clone(),
+                },
+            );
+        }
         let action = input.action;
         let format = input.format;
         let kind = input.kind;
-        let bytes = guard(move || match action.as_str() {
-            "render" => render_document(&source, &format),
+        let (bytes, warnings) = guard(move || match action.as_str() {
+            "render" => render_document(&source, &format, assets),
             _ => render_diagram(&source, &kind, &format),
         })?;
         Ok(InvokeOutput {
@@ -170,6 +241,7 @@ impl Guest for Component {
                 ref_: String::new(),
                 data: bytes,
             },
+            warnings,
         })
     }
 }

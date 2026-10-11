@@ -1,9 +1,9 @@
 {
   "package": {
     "id": "docgen",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "api": 1,
-    "description": "Render markdown to PDF/DOCX/PPTX and mermaid/excalidraw diagrams to SVG/PNG in-process — no shell needed. Wasm-backed docgen_compose tool + hosted skill.",
+    "description": "Blob-native docgen renderer (no filesystem): markdown → PDF/DOCX/PPTX, mermaid/excalidraw → SVG/PNG. Refs in, refs out; hosted render-doc skill.",
     "entry": "broker.js",
     "license": "MIT OR Apache-2.0"
   },
@@ -13,7 +13,7 @@
   "tools": [
     {
       "name": "docgen_compose",
-      "description": "Render markdown → PDF/DOCX/PPTX or mermaid/excalidraw → SVG/PNG, in-process (no shell). Args: action, format, source|content, kind?, out?."
+      "description": "Render markdown → PDF/DOCX/PPTX or mermaid/excalidraw → SVG/PNG, in-process (blob refs; no shell, no filesystem needed). Args: action, format, content|source{ref}, assets[{name,ref}], kind?, surface?."
     }
   ],
   "components": [
@@ -24,6 +24,5 @@
       "wall_clock_ms": 30000,
       "memory_bytes": 268435456
     }
-  ],
-  "caps_advertised": [{ "cap": "fs.write", "scope": "docgen" }]
+  ]
 }

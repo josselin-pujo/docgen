@@ -22,20 +22,34 @@ world athena-invoke {
         code: option<string>,
     }
 
+    /// One named image asset for `render`: `name` is the exact URL the
+    /// markdown uses (e.g. `img/shot.png`); the host derefs the holder
+    /// into `data` before `run`.
+    record asset {
+        name: string,
+        image: blob,
+    }
+
     record invoke-input {
         /// "render" (markdown → document) or "diagram" (mermaid/excalidraw source → image).
         action: string,
         /// render: "pdf" | "docx" | "pptx"; diagram: "svg" | "png".
         format: string,
-        /// diagrams only: "mermaid" | "excalidraw"; empty for render.
+        /// diagrams only: "mermaid" | "excalidraw"; empty infers from the
+        /// source (excalidraw JSON vs mermaid text, like the CLI).
         kind: string,
         /// The source text; the host derefs the incoming ref into `data`.
         content: blob,
+        /// Inline images referenced by the document. A URL without bytes
+        /// renders as a visible placeholder and produces a warning.
+        assets: list<asset>,
     }
 
     record invoke-output {
         /// The rendered bytes; `ref` is minted host-side.
         artifact: blob,
+        /// Non-fatal render notes (skipped diagrams, images with no bytes).
+        warnings: list<string>,
     }
 
     export run: func(input: invoke-input) -> result<invoke-output, tool-error>;

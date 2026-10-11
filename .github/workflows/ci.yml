@@ -89,6 +89,11 @@ jobs:
           wasm-tools component wit target/docgen-athena.component.wasm
       - name: Import-surface assertions
         run: cargo test -p docgen-athena --test imports
+      - name: Broker smoke tests (node)
+        run: >
+          node --test
+          crates/docgen-athena/plugin/test/broker.test.mjs
+          crates/docgen-athena/plugin/test/workspace.test.mjs
 
   fuzz:
     runs-on: ubuntu-latest

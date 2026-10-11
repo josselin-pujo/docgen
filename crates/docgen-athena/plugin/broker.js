@@ -1,15 +1,15 @@
 "use strict";
 
-// docgen — Athena plugin broker.
+// docgen — Athena plugin broker (foundation: blob-native, no filesystem).
 //
 // One model-facing tool (`docgen_compose`) backed by the `docgen-athena`
-// wasm component (the bundle's `components` row). The broker owns argument
-// validation and fs delivery; the component is pure compute.
-//
-// The source rides into the component as a blob holder — `fs.readBlob`
-// harvests a workspace file host-side, `blob.put` takes inline text once —
-// so bytes never transit this isolate for files. The artifact rides out as
-// a host-minted holder and is materialized with `fs.writeBlob`.
+// wasm component (the bundle's `components` row). The contract is refs-only:
+// sources ride in as host-minted blob holders (inline text is blob-put once)
+// and the artifact rides out as a host-minted ref, surfaced to the transcript
+// as a media card. Nothing here touches a filesystem — fs-backed
+// conveniences (path sources, materialization, image harvesting) live in the
+// `docgen-workspace` companion plugin, which depends on this one and
+// delegates the actual render here.
 
 const MANIFEST =
   (typeof globalThis.__athenaManifest === "object" &&
@@ -24,16 +24,17 @@ const FORMATS = {
   render: ["pdf", "docx", "pptx"],
   diagram: ["svg", "png"],
 };
-const EXT = { pdf: "pdf", docx: "docx", pptx: "pptx", svg: "svg", png: "png" };
+const DIGEST = /^sha256:[0-9a-f]{64}$/;
 
 const SPEC = {
   name: TOOL,
   description:
-    "Render a document or diagram in-process (no shell): markdown with YAML frontmatter " +
-    "(```mermaid```/```excalidraw``` blocks render natively) → PDF/DOCX/PPTX; or a " +
-    "mermaid/excalidraw source → SVG/PNG. Pass source (workspace file, preferred) or " +
-    "content (inline text), not both. The result is a workspace file plus a transcript " +
-    "artifact card.",
+    "Render a document or diagram in-process (no shell, no filesystem needed): " +
+    "markdown with YAML frontmatter (```mermaid```/```excalidraw``` blocks render natively) " +
+    "→ PDF/DOCX/PPTX; or a mermaid/excalidraw source → SVG/PNG. Pass `content` (inline text) " +
+    "or `source` ({ref}) — the source as a blob digest, e.g. another tool's artifact. Image " +
+    "URLs in the markdown resolve against `assets` (name = the exact URL, ref = blob digest). " +
+    "The artifact comes back as a workspace-independent blob ref, surfaced as a transcript card.",
   parameters: {
     type: "object",
     properties: {
@@ -48,25 +49,46 @@ const SPEC = {
         enum: ["pdf", "docx", "pptx", "svg", "png"],
         description: "pdf/docx/pptx for render; svg/png for diagram.",
       },
-      source: {
-        type: "string",
-        description:
-          "Workspace-relative path of the source file (preferred for large sources).",
-      },
       content: {
         type: "string",
         description: "Inline source text — alternative to source, for short sources.",
       },
+      source: {
+        type: "object",
+        properties: {
+          ref: {
+            type: "string",
+            description: "Blob digest (sha256:…) of the source bytes.",
+          },
+        },
+        required: ["ref"],
+        description:
+          "The source as a blob ref: a digest from `docgen_file_to_blob` (workspace " +
+          "plugin) or another tool's artifact — bytes never transit the tool call.",
+      },
+      assets: {
+        type: "array",
+        description:
+          "Inline images for render: name is the exact URL the markdown uses " +
+          "(e.g. \"img/shot.png\"); ref is the image bytes' blob digest.",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Markdown image URL." },
+            ref: { type: "string", description: "Blob digest (sha256:…)." },
+          },
+          required: ["name", "ref"],
+        },
+      },
       kind: {
         type: "string",
         enum: ["mermaid", "excalidraw"],
-        description:
-          "Diagram family; inferred from the source extension/content when omitted.",
+        description: "Diagram family; inferred from the source when omitted.",
       },
-      out: {
-        type: "string",
+      surface: {
+        type: "boolean",
         description:
-          "Workspace-relative output path; defaults to the source name with the new extension.",
+          "Surface the artifact as a media card (default true; config can flip the default).",
       },
     },
     required: ["action", "format"],
@@ -92,10 +114,9 @@ function invoke(req) {
   const args = req.args && typeof req.args === "object" ? req.args : {};
   const action = str(args.action);
   const format = str(args.format);
-  const source = str(args.source);
   const content = str(args.content);
-  const kindArg = str(args.kind);
-  const outArg = str(args.out);
+  const kind = str(args.kind);
+  const surface = typeof args.surface === "boolean" ? args.surface : SURFACE;
 
   if (action !== "render" && action !== "diagram") {
     return fail('action must be "render" or "diagram"');
@@ -103,36 +124,41 @@ function invoke(req) {
   if (FORMATS[action].indexOf(format) === -1) {
     return fail(action + ": format must be one of " + FORMATS[action].join(", "));
   }
-  if (!source && !content) {
-    return fail("pass exactly one of `source` (workspace file) or `content` (inline text)");
+  if (!content && !args.source) {
+    return fail("pass exactly one of `content` (inline text) or `source` ({ref})");
   }
-  if (source && content) {
-    return fail("pass exactly one of `source` or `content` — not both");
+  if (content && args.source) {
+    return fail("pass exactly one of `content` or `source` — not both");
   }
 
-  // Resolve the source to a blob ref (host-side for files).
+  // The source resolves to a blob ref: harvest inline text once, or pass an
+  // existing digest straight through (the host derefs it into the component).
   let ref;
-  try {
-    if (source) {
-      ref = Athena.fs.readBlob(source);
-    } else {
-      ref = Athena.blob.put(new TextEncoder().encode(content));
+  if (content) {
+    ref = Athena.blob.put(new TextEncoder().encode(content));
+  } else {
+    ref = args.source && typeof args.source === "object" ? str(args.source.ref) : "";
+    if (!DIGEST.test(ref)) {
+      return fail("source.ref must be a blob digest (sha256:…)");
     }
-  } catch (e) {
-    return fail("reading the source failed: " + prose(e));
   }
   if (typeof ref !== "string" || ref.length === 0) {
-    return fail("reading the source produced no blob ref");
+    return fail("the source produced no blob ref");
   }
 
-  // Diagram family: explicit `kind` wins; otherwise extension, then sniff
-  // (mirrors the CLI's detect: excalidraw = .excalidraw/.json extension or
-  // a JSON object mentioning "elements"/"type": "excalidraw").
-  let kind = "";
-  if (action === "diagram") {
-    kind = kindArg || inferKind(source, content);
-    if (kind !== "mermaid" && kind !== "excalidraw") {
-      return fail('diagram: pass kind "mermaid" or "excalidraw" (could not classify the source)');
+  // Assets: named refs; names are the markdown URLs.
+  const assets = [];
+  if (args.assets !== undefined) {
+    if (!Array.isArray(args.assets)) {
+      return fail("assets must be an array of {name, ref}");
+    }
+    for (const a of args.assets) {
+      const name = str(a && a.name);
+      const aref = str(a && a.ref);
+      if (name === "" || !DIGEST.test(aref)) {
+        return fail('each asset needs {name: "img/…", ref: "sha256:…"}');
+      }
+      assets.push({ name: name, image: { ref: aref } });
     }
   }
 
@@ -145,6 +171,7 @@ function invoke(req) {
       format: format,
       kind: kind,
       content: { ref: ref },
+      assets: assets,
     });
   } catch (e) {
     return fail("docgen wasm invoke failed: " + prose(e));
@@ -158,39 +185,28 @@ function invoke(req) {
   if (typeof artifactRef !== "string" || artifactRef.length === 0) {
     return fail("component returned no artifact ref");
   }
-
-  const out = outArg || defaultOut(source, action, format);
-  try {
-    Athena.fs.writeBlob(out, artifactRef);
-  } catch (e) {
-    return {
-      ok: false,
-      output:
-        "rendered, but could not write " +
-        out +
-        ": " +
-        prose(e) +
-        "\nartifact: " +
-        artifactRef,
-    };
-  }
+  const warnings = Array.isArray(reply.ok.warnings) ? reply.ok.warnings : [];
 
   // Best-effort: surface the artifact to the transcript from the existing
   // digest (a failure here must never fail the tool).
-  if (SURFACE) {
+  let surfaced = false;
+  if (surface) {
     try {
       Athena.tool.invoke(String(req.callKey || TOOL) + ":surface", "load_artifact", {
         digest: artifactRef,
       });
+      surfaced = true;
     } catch (e) {
       console.error("[docgen] artifact surfacing failed: " + prose(e));
     }
   }
 
-  return {
-    ok: true,
-    output: "wrote " + out + " (" + format + ")\nartifact: " + artifactRef,
-  };
+  let output = "rendered " + format + "\nartifact: " + artifactRef;
+  if (surfaced) output += "\nsurfaced as a media card";
+  if (warnings.length) {
+    output += "\nwarnings:\n  - " + warnings.join("\n  - ");
+  }
+  return { ok: true, output: output };
 }
 
 // --- helpers ---------------------------------------------------------------
@@ -216,48 +232,6 @@ function parseConfig(config) {
     }
   }
   return config && typeof config === "object" ? config : {};
-}
-
-function baseName(p) {
-  return p.substring(p.lastIndexOf("/") + 1);
-}
-
-function inferKind(source, content) {
-  if (source) {
-    const base = baseName(source);
-    const dot = base.lastIndexOf(".");
-    const ext = (dot > 0 ? base.substring(dot + 1) : "").toLowerCase();
-    if (ext === "excalidraw" || ext === "json") return "excalidraw";
-    if (ext === "mmd" || ext === "mermaid") return "mermaid";
-  }
-  let text = content;
-  if (!text && source) {
-    try {
-      text = new TextDecoder().decode(Athena.fs.read(source));
-    } catch (_) {
-      text = "";
-    }
-  }
-  if (!text) return "";
-  const trimmed = text.replace(/^\s+/, "");
-  if (
-    trimmed.startsWith("{") &&
-    (text.indexOf('"elements"') !== -1 || text.indexOf('"type": "excalidraw"') !== -1)
-  ) {
-    return "excalidraw";
-  }
-  return "mermaid";
-}
-
-function defaultOut(source, action, format) {
-  const ext = EXT[format];
-  if (source) {
-    const base = baseName(source);
-    const dot = base.lastIndexOf(".");
-    const stem = dot > 0 ? base.substring(0, dot) : base;
-    return source.substring(0, source.length - base.length) + stem + "." + ext;
-  }
-  return (action === "render" ? "document." : "diagram.") + ext;
 }
 
 function describeEnvelope(reply) {
