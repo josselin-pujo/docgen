@@ -29,7 +29,12 @@ roadmap item).
   remove+add noise.
 - **DOCX output** (`docgen-office`): hand-rolled OOXML (zip + XML, all in
   memory, byte-deterministic output — fixed zip timestamps, no clocks).
-  Fresh rendering with styles/numbering/tables/images and template filling.
+  Fresh rendering with styles/numbering/tables/images and template filling;
+  `toc: true` frontmatter synthesizes a static, internally linked `Contents`
+  (heading titles as bookmarks + hyperlinks — no field codes, so Word shows
+  no field-update/security prompt). Inline images (PNG/JPEG/GIF) embed from
+  paths relative to the source file; unresolvable ones stay visible as
+  `[image not embedded: …]` markers.
   Diff rendering as native Word tracked changes is implemented and tested
   (equal content unmarked, deletions `w:del`/`w:delText`, insertions
   `w:ins` at word/line/item/row granularity, anchored comments on moves
@@ -49,7 +54,10 @@ roadmap item).
 - **PDF** via embedded typst 0.15 against a custom in-memory `World`:
   fonts compiled in from `typst-assets` (Libertinus + NewCM math + DejaVu
   mono), deterministic output (`World::today` returns `None` — document
-  dates come from frontmatter). Per-page PNG rendering via `typst-render`.
+  dates come from frontmatter). `toc: true` prepends a `Contents` outline
+  (typst `#outline`). Inline images (PNG/JPEG/GIF/SVG) render from paths
+  relative to the source; an image alone in its paragraph becomes a centered
+  figure. Per-page PNG rendering via `typst-render`.
 - **Custom typst templates**: pass a `.typ` file as the main document shell
   (`docgen render doc.md --template shell.typ`, or
   `TypstRenderer::with_template`). Every compile exposes two virtual

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
+use docgen_core::assets::{AssetFormat, AssetMap, RenderedAsset};
 use docgen_core::parse_document;
 use docgen_excalidraw::ExcalidrawRenderer;
 use docgen_mermaid::MermaidRenderer;
@@ -111,9 +112,11 @@ fn render(
         "pdf" => {
             let excalidraw = ExcalidrawRenderer::new();
             let mermaid = MermaidRenderer::new();
-            let outcome = docgen_core::assets::render_diagrams_with(&doc, &[&mermaid, &excalidraw])
-                .context("rendering diagrams")?;
+            let mut outcome =
+                docgen_core::assets::render_diagrams_with(&doc, &[&mermaid, &excalidraw])
+                    .context("rendering diagrams")?;
             warn_skipped(&outcome.skipped);
+            load_images(&doc, &input, &mut outcome.assets);
 
             let mut renderer = TypstRenderer::new_embedded();
             if let Some(template_path) = template {
@@ -135,9 +138,11 @@ fn render(
             // Diagrams become PNG images inside the docx.
             let excalidraw = ExcalidrawRenderer::raster();
             let mermaid = MermaidRenderer::raster();
-            let outcome = docgen_core::assets::render_diagrams_with(&doc, &[&mermaid, &excalidraw])
-                .context("rendering diagrams")?;
+            let mut outcome =
+                docgen_core::assets::render_diagrams_with(&doc, &[&mermaid, &excalidraw])
+                    .context("rendering diagrams")?;
             warn_skipped(&outcome.skipped);
+            load_images(&doc, &input, &mut outcome.assets);
 
             let bytes = match template {
                 Some(template_path) => {
@@ -243,6 +248,39 @@ fn diff(
 fn warn_skipped(skipped: &[String]) {
     for s in skipped {
         eprintln!("warning: no renderer for diagram block {s}; emitting placeholder");
+    }
+}
+
+/// Resolves inline-image URLs against the source file's directory and folds
+/// the bytes into the asset map. Missing/unreadable/external images warn and
+/// stay as visible placeholders in the output.
+fn load_images(doc: &docgen_core::model::Document, source: &Path, assets: &mut AssetMap) {
+    let base = source.parent().unwrap_or_else(|| Path::new("."));
+    for url in doc.image_urls() {
+        if assets.contains_key(&url) {
+            continue;
+        }
+        if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("data:") {
+            eprintln!(
+                "warning: image {url}: not embedded (needs a local file, relative to the source)"
+            );
+            continue;
+        }
+        let bytes = match std::fs::read(base.join(&url)) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                eprintln!("warning: image {url}: {e}");
+                continue;
+            }
+        };
+        match AssetFormat::from_bytes(&bytes) {
+            Some(format) => {
+                assets.insert(url, RenderedAsset { format, bytes });
+            }
+            None => eprintln!(
+                "warning: image {url}: unrecognized image format (png/jpeg/gif/svg supported)"
+            ),
+        }
     }
 }
 

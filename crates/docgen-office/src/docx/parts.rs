@@ -143,6 +143,52 @@ pub const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone=
 </w:styles>
 "#;
 
+/// Styles referenced only when a `toc: true` document synthesizes its
+/// `Contents` block — kept out of the default part so documents without a
+/// TOC stay byte-identical.
+pub const TOC_STYLES_XML: &str = r#"  <w:style w:type="paragraph" w:styleId="TOCHeading">
+    <w:name w:val="TOC Heading"/>
+    <w:basedOn w:val="Normal"/>
+    <w:next w:val="Normal"/>
+    <w:pPr><w:spacing w:before="160" w:after="120"/></w:pPr>
+    <w:rPr><w:b/><w:color w:val="2F5496"/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="TOC1">
+    <w:name w:val="toc 1"/>
+    <w:basedOn w:val="Normal"/>
+    <w:pPr><w:spacing w:after="40"/></w:pPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="TOC2">
+    <w:name w:val="toc 2"/>
+    <w:basedOn w:val="Normal"/>
+    <w:pPr><w:ind w:left="284"/><w:spacing w:after="40"/></w:pPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="TOC3">
+    <w:name w:val="toc 3"/>
+    <w:basedOn w:val="Normal"/>
+    <w:pPr><w:ind w:left="568"/><w:spacing w:after="40"/></w:pPr>
+  </w:style>
+  <w:style w:type="character" w:styleId="Hyperlink">
+    <w:name w:val="Hyperlink"/>
+    <w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr>
+  </w:style>
+"#;
+
+/// styles.xml: the default part, with the TOC styles appended when the
+/// document uses them.
+pub fn styles_xml(with_toc: bool) -> String {
+    let body = STYLES_XML
+        .strip_suffix("</w:styles>\n")
+        .expect("styles template ends with the closing tag");
+    let mut out = String::with_capacity(body.len() + TOC_STYLES_XML.len() + 16);
+    out.push_str(body);
+    if with_toc {
+        out.push_str(TOC_STYLES_XML);
+    }
+    out.push_str("</w:styles>\n");
+    out
+}
+
 pub const NUMBERING_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:abstractNum w:abstractNumId="0">

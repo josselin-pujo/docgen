@@ -231,7 +231,7 @@ fn fill_document(
                     if paragraph_is_body && !body_emitted {
                         body_emitted = true;
                         // Replace the marker paragraph entirely.
-                        let mut emitter = Emitter::for_template(next_rid);
+                        let mut emitter = Emitter::for_template(next_rid, assets);
                         emitter.write_cover(&doc.frontmatter);
                         for block in &doc.blocks {
                             emitter.write_block(block, super::document::Mark::None, assets);

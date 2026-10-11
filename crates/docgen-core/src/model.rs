@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 /// A parsed document: YAML frontmatter plus a flat list of blocks, each
@@ -7,6 +9,67 @@ use serde::{Deserialize, Serialize};
 pub struct Document {
     pub frontmatter: Frontmatter,
     pub blocks: Vec<Block>,
+}
+
+impl Document {
+    /// Every inline-image URL in document order, deduplicated (first
+    /// occurrence wins). The caller decides how to resolve them: the CLI
+    /// reads files relative to the source, the plugin brokers harvest
+    /// workspace blobs.
+    pub fn image_urls(&self) -> Vec<String> {
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut out = Vec::new();
+        for block in &self.blocks {
+            collect_block_urls(block, &mut seen, &mut out);
+        }
+        out
+    }
+}
+
+fn collect_block_urls(block: &Block, seen: &mut HashSet<String>, out: &mut Vec<String>) {
+    match &block.kind {
+        BlockKind::Heading { inline, .. } | BlockKind::Paragraph { inline } => {
+            collect_inline_urls(inline, seen, out);
+        }
+        BlockKind::List { items, .. } => {
+            for item in items {
+                collect_inline_urls(&item.content, seen, out);
+                for child in &item.children {
+                    collect_block_urls(child, seen, out);
+                }
+            }
+        }
+        BlockKind::Table { rows } => {
+            for row in rows {
+                for cell in &row.cells {
+                    collect_inline_urls(cell, seen, out);
+                }
+            }
+        }
+        BlockKind::BlockQuote { blocks } => {
+            for child in blocks {
+                collect_block_urls(child, seen, out);
+            }
+        }
+        BlockKind::CodeBlock { .. } | BlockKind::Diagram { .. } | BlockKind::ThematicBreak => {}
+    }
+}
+
+fn collect_inline_urls(inlines: &[Inline], seen: &mut HashSet<String>, out: &mut Vec<String>) {
+    for inline in inlines {
+        match inline {
+            Inline::Image { url, .. } => {
+                if seen.insert(url.clone()) {
+                    out.push(url.clone());
+                }
+            }
+            Inline::Strong(inner) | Inline::Emphasis(inner) | Inline::Strikethrough(inner) => {
+                collect_inline_urls(inner, seen, out);
+            }
+            Inline::Link { text, .. } => collect_inline_urls(text, seen, out),
+            Inline::Text(_) | Inline::Code(_) | Inline::SoftBreak | Inline::HardBreak => {}
+        }
+    }
 }
 
 /// Rich frontmatter. The named fields cover what the renderers understand;

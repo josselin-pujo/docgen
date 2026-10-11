@@ -13,7 +13,8 @@
 //!
 //! Text is escaped defensively: every typst-special character in prose gets a
 //! backslash, so author content can never change markup structure. Diagram
-//! blocks become `#image(...)` references into the world's virtual files.
+//! blocks and inline images become `#image(...)` references into the world's
+//! virtual files.
 
 use std::collections::HashSet;
 
@@ -24,7 +25,8 @@ use docgen_core::model::{Block, BlockKind, Document, Inline, ListItem};
 pub const BODY_PATH: &str = "docgen-body.typ";
 pub const META_PATH: &str = "docgen-meta.typ";
 
-/// The built-in template: plain A4 article with a centered cover.
+/// The built-in template: plain A4 article with a centered cover, plus a
+/// `Contents` outline when `toc: true` is set in the frontmatter.
 const DEFAULT_TEMPLATE: &str = r##"#import "docgen-meta.typ": meta
 #set page(paper: "a4")
 #set heading(numbering: "1.1")
@@ -49,6 +51,11 @@ const DEFAULT_TEMPLATE: &str = r##"#import "docgen-meta.typ": meta
     ]
   ]
   #v(2em)
+]
+
+#if meta.at("toc", default: false) == true [
+  #outline(title: [Contents], depth: 3)
+  #v(1.5em)
 ]
 
 #include "docgen-body.typ"
@@ -198,10 +205,32 @@ fn emit_block(
     match &block.kind {
         BlockKind::Heading { level, inline } => {
             let hashes = "=".repeat((*level).clamp(1, 6) as usize);
-            out.push_str(&format!("{hashes} {}\n\n", inline_markup(inline)));
+            out.push_str(&format!(
+                "{hashes} {}\n\n",
+                inline_markup(inline, assets, files, used_names)
+            ));
         }
         BlockKind::Paragraph { inline } => {
-            out.push_str(&format!("{}\n\n", inline_markup(inline)));
+            // A paragraph that is exactly one image renders as a centered
+            // figure at 92% width (matching diagrams); anything else flows
+            // inline at natural size.
+            let figure = match inline.as_slice() {
+                [Inline::Image { url, .. }] => assets.get(url).map(|asset| (url.as_str(), asset)),
+                _ => None,
+            };
+            match figure {
+                Some((url, asset)) => {
+                    let name = image_file_name(url, asset.format, used_names);
+                    files.push((format!("assets/{name}"), asset.bytes.clone()));
+                    out.push_str(&format!(
+                        "#align(center)[#image(\"assets/{name}\", width: 92%)]\n\n"
+                    ));
+                }
+                None => out.push_str(&format!(
+                    "{}\n\n",
+                    inline_markup(inline, assets, files, used_names)
+                )),
+            }
         }
         BlockKind::CodeBlock { language, code } => {
             let fence = fence_for(code);
@@ -237,17 +266,20 @@ fn emit_block(
             start,
             items,
         } => {
-            emit_list(*ordered, *start, items, 0, out);
+            emit_list(*ordered, *start, items, 0, assets, files, used_names, out);
             out.push('\n');
         }
         BlockKind::Table { rows } => {
-            emit_table(rows, out);
+            emit_table(rows, assets, files, used_names, out);
         }
         BlockKind::BlockQuote { blocks } => {
             out.push_str("#quote(block: true)[\n");
             for child in blocks {
                 if let BlockKind::Paragraph { inline } = &child.kind {
-                    out.push_str(&format!("  {}\n\n", inline_markup(inline)));
+                    out.push_str(&format!(
+                        "  {}\n\n",
+                        inline_markup(inline, assets, files, used_names)
+                    ));
                 }
             }
             out.push_str("]\n\n");
@@ -258,7 +290,17 @@ fn emit_block(
     }
 }
 
-fn emit_list(ordered: bool, start: u64, items: &[ListItem], depth: usize, out: &mut String) {
+#[allow(clippy::too_many_arguments)]
+fn emit_list(
+    ordered: bool,
+    start: u64,
+    items: &[ListItem],
+    depth: usize,
+    assets: &AssetMap,
+    files: &mut Vec<(String, Vec<u8>)>,
+    used_names: &mut HashSet<String>,
+    out: &mut String,
+) {
     let indent = "  ".repeat(depth);
     for (i, item) in items.iter().enumerate() {
         let marker = if ordered {
@@ -268,7 +310,7 @@ fn emit_list(ordered: bool, start: u64, items: &[ListItem], depth: usize, out: &
         };
         out.push_str(&format!(
             "{indent}{marker} {}\n",
-            inline_markup(&item.content)
+            inline_markup(&item.content, assets, files, used_names)
         ));
         for child in &item.children {
             if let BlockKind::List {
@@ -277,13 +319,28 @@ fn emit_list(ordered: bool, start: u64, items: &[ListItem], depth: usize, out: &
                 items,
             } = &child.kind
             {
-                emit_list(*ordered, *start, items, depth + 1, out);
+                emit_list(
+                    *ordered,
+                    *start,
+                    items,
+                    depth + 1,
+                    assets,
+                    files,
+                    used_names,
+                    out,
+                );
             }
         }
     }
 }
 
-fn emit_table(rows: &[docgen_core::model::TableRow], out: &mut String) {
+fn emit_table(
+    rows: &[docgen_core::model::TableRow],
+    assets: &AssetMap,
+    files: &mut Vec<(String, Vec<u8>)>,
+    used_names: &mut HashSet<String>,
+    out: &mut String,
+) {
     let Some(first) = rows.first() else { return };
     let cols = first.cells.len().max(1);
     out.push_str(&format!("#table(columns: {cols},\n"));
@@ -291,7 +348,7 @@ fn emit_table(rows: &[docgen_core::model::TableRow], out: &mut String) {
         let cells: Vec<String> = row
             .cells
             .iter()
-            .map(|c| format!("[{}]", inline_markup(c)))
+            .map(|c| format!("[{}]", inline_markup(c, assets, files, used_names)))
             .collect();
         if ri == 0 && row.is_header {
             out.push_str(&format!("  table.header({}),\n", cells.join(", ")));
@@ -324,8 +381,45 @@ fn asset_file_name(block: &Block, format: AssetFormat, used: &mut HashSet<String
     name
 }
 
-/// Inline content → typst markup.
-fn inline_markup(inlines: &[Inline]) -> String {
+/// File name for an inline image asset: derived from the URL's last path
+/// segment, deduplicated against `used`.
+fn image_file_name(url: &str, format: AssetFormat, used: &mut HashSet<String>) -> String {
+    let segment = url.rsplit(['/', '\\']).next().unwrap_or(url);
+    let stem = segment.rsplit_once('.').map(|(s, _)| s).unwrap_or(segment);
+    let sanitized: String = stem
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let base = sanitized.trim_matches('.').to_string();
+    let base = if base.is_empty() {
+        "image".to_string()
+    } else {
+        base
+    };
+    let mut name = format!("{base}.{}", format.extension());
+    let mut n = 1;
+    while !used.insert(name.clone()) {
+        n += 1;
+        name = format!("{base}-{n}.{}", format.extension());
+    }
+    name
+}
+
+/// Inline content → typst markup. Images with bytes in `assets` become
+/// `#image("assets/<name>")`; unknown ones keep their alt text visible
+/// (linked), so reviews catch missing files instead of silent gaps.
+fn inline_markup(
+    inlines: &[Inline],
+    assets: &AssetMap,
+    files: &mut Vec<(String, Vec<u8>)>,
+    used_names: &mut HashSet<String>,
+) -> String {
     let mut out = String::new();
     for inline in inlines {
         match inline {
@@ -338,30 +432,46 @@ fn inline_markup(inlines: &[Inline]) -> String {
                 }
             }
             Inline::Strong(inner) => {
-                out.push_str(&format!("*{}*", inline_markup(inner)));
+                out.push_str(&format!(
+                    "*{}*",
+                    inline_markup(inner, assets, files, used_names)
+                ));
             }
             Inline::Emphasis(inner) => {
-                out.push_str(&format!("_{}_", inline_markup(inner)));
+                out.push_str(&format!(
+                    "_{}_",
+                    inline_markup(inner, assets, files, used_names)
+                ));
             }
             Inline::Strikethrough(inner) => {
-                out.push_str(&format!("#text(strike: true)[{}]", inline_markup(inner)));
+                out.push_str(&format!(
+                    "#text(strike: true)[{}]",
+                    inline_markup(inner, assets, files, used_names)
+                ));
             }
             Inline::Link { url, text } => {
                 out.push_str(&format!(
                     "#link(\"{}\")[{}]",
                     esc_str(url),
-                    inline_markup(text)
+                    inline_markup(text, assets, files, used_names)
                 ));
             }
-            Inline::Image { url, alt } => {
-                // Local image files are resolved by the host in a later
-                // milestone; until then keep the alt text visible and linked.
-                out.push_str(&format!(
-                    "#link(\"{}\")[{}]",
-                    esc_str(url),
-                    inline_markup(alt)
-                ));
-            }
+            Inline::Image { url, alt } => match assets.get(url) {
+                Some(asset) => {
+                    let name = image_file_name(url, asset.format, used_names);
+                    files.push((format!("assets/{name}"), asset.bytes.clone()));
+                    out.push_str(&format!("#image(\"assets/{name}\")"));
+                }
+                None => {
+                    // No bytes (missing file, external URL, ...): keep the
+                    // alt text visible and linked.
+                    out.push_str(&format!(
+                        "#link(\"{}\")[{}]",
+                        esc_str(url),
+                        inline_markup(alt, assets, files, used_names)
+                    ));
+                }
+            },
             Inline::SoftBreak => out.push(' '),
             Inline::HardBreak => out.push_str("\\ "),
         }
@@ -446,5 +556,58 @@ mod tests {
         assert!(meta.contains("\"ratio\": 1.5"), "{meta}");
         assert!(meta.contains("(1, 2,)"), "{meta}");
         assert!(meta.contains("\"nested\": (\"k\": \"v\")"), "{meta}");
+    }
+
+    fn named_png() -> docgen_core::assets::RenderedAsset {
+        docgen_core::assets::RenderedAsset {
+            format: AssetFormat::Png,
+            bytes: vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A],
+        }
+    }
+
+    fn body_of(out: &Emitted) -> &str {
+        &out.sources
+            .iter()
+            .find(|(name, _)| name == BODY_PATH)
+            .expect("body source")
+            .1
+    }
+
+    #[test]
+    fn inline_image_embeds_and_registers_the_file() {
+        let doc = docgen_core::parse_document("Text ![logo](img/logo.png) more.\n").unwrap();
+        let mut assets = AssetMap::new();
+        assets.insert("img/logo.png".to_string(), named_png());
+        let out = emit(&doc, &assets, None);
+        assert!(
+            body_of(&out).contains("#image(\"assets/logo.png\")"),
+            "{}",
+            body_of(&out)
+        );
+        assert!(out.files.iter().any(|(name, _)| name == "assets/logo.png"));
+    }
+
+    #[test]
+    fn image_only_paragraph_becomes_centered_figure() {
+        let doc = docgen_core::parse_document("![hero](img/hero.png)\n").unwrap();
+        let mut assets = AssetMap::new();
+        assets.insert("img/hero.png".to_string(), named_png());
+        let out = emit(&doc, &assets, None);
+        assert!(
+            body_of(&out).contains("#align(center)[#image(\"assets/hero.png\", width: 92%)]"),
+            "{}",
+            body_of(&out)
+        );
+    }
+
+    #[test]
+    fn missing_image_keeps_linked_alt_text() {
+        let doc = docgen_core::parse_document("![gone](img/gone.png)\n").unwrap();
+        let out = emit(&doc, &AssetMap::new(), None);
+        assert!(
+            body_of(&out).contains("#link(\"img/gone.png\")[gone]"),
+            "{}",
+            body_of(&out)
+        );
     }
 }

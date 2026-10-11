@@ -2,13 +2,15 @@
 //! native tracked changes (`w:ins`/`w:del`) with comments for moves and
 //! diagram replacements.
 
-use docgen_core::assets::AssetMap;
+use std::collections::{HashMap, HashSet};
+
+use docgen_core::assets::{AssetFormat, AssetMap};
 use docgen_core::diff::{ContentChange, DiffPlan, LineOp, Run, RunOp, Step, flatten_runs_pub};
 use docgen_core::model::{Block, BlockKind, DiagramFormat, Document, Inline, ListItem, TableRow};
 use quick_xml::Reader;
 
 use super::RevisionIdentity;
-use super::package::{Package, png_dimensions};
+use super::package::Package;
 use super::parts;
 use super::xml::Xml;
 use crate::{Error, Result};
@@ -59,14 +61,14 @@ impl Media {
         }
     }
 
-    fn register(&mut self, png: &[u8]) -> (String, u64, u64) {
+    fn register(&mut self, bytes: &[u8], format: AssetFormat) -> (String, u64, u64) {
         let n = self.files.len() + 1;
-        let name = format!("media/image{n}.png");
+        let name = format!("media/image{n}.{}", format.extension());
         let rid = format!("rId{}", self.next_rid);
         self.next_rid += 1;
         self.rels.push((rid.clone(), name.clone()));
-        self.files.push((format!("word/{name}"), png.to_vec()));
-        let (w, h) = png_dimensions(png).unwrap_or((600, 400));
+        self.files.push((format!("word/{name}"), bytes.to_vec()));
+        let (w, h) = docgen_core::assets::image_dimensions(bytes, format).unwrap_or((600, 400));
         // 96 dpi assumed; clamp to content width.
         let mut cx = w as f64 / 96.0 * 914_400.0;
         let mut cy = h as f64 / 96.0 * 914_400.0;
@@ -153,6 +155,12 @@ fn direct_props_for(style: &str) -> DirectProps {
             color: Some("595959"),
             ..Default::default()
         },
+        "TOCHeading" => DirectProps {
+            bold: true,
+            size: Some(32),
+            color: Some("2F5496"),
+            ..Default::default()
+        },
         _ => DirectProps::default(),
     }
 }
@@ -170,10 +178,17 @@ pub(crate) struct Emitter<'a> {
     /// Direct formatting mode (foreign templates without our styles).
     direct: bool,
     props: DirectProps,
+    /// Assets for this render: rendered diagrams (keyed by block id) and
+    /// inline images (keyed by markdown URL).
+    assets: &'a AssetMap,
+    /// Word bookmark names for TOC'd headings, keyed by block id (empty when
+    /// the document has no synthesized TOC).
+    toc_anchors: HashMap<String, String>,
+    next_bookmark_id: usize,
 }
 
 impl<'a> Emitter<'a> {
-    fn new(revision: Option<RevisionMode<'a>>) -> Self {
+    fn new(revision: Option<RevisionMode<'a>>, assets: &'a AssetMap) -> Self {
         Self {
             xml: Xml::new(),
             // rId100..rId105 are reserved for the fixed part relationships
@@ -186,12 +201,15 @@ impl<'a> Emitter<'a> {
             in_block: false,
             direct: false,
             props: DirectProps::default(),
+            assets,
+            toc_anchors: HashMap::new(),
+            next_bookmark_id: 1,
         }
     }
 
     /// Emitter for embedding bodies into foreign templates: direct
     /// formatting, image relationship ids starting above `next_rid`.
-    pub(crate) fn for_template(next_rid: usize) -> Self {
+    pub(crate) fn for_template(next_rid: usize, assets: &'a AssetMap) -> Self {
         Self {
             xml: Xml::new(),
             media: Media::new(next_rid),
@@ -202,6 +220,9 @@ impl<'a> Emitter<'a> {
             in_block: false,
             direct: true,
             props: DirectProps::default(),
+            assets,
+            toc_anchors: HashMap::new(),
+            next_bookmark_id: 1,
         }
     }
 
@@ -342,6 +363,12 @@ impl<'a> Emitter<'a> {
                     "Heading3" => {
                         self.xml.empty("w:spacing", &[("w:before", "200")]);
                     }
+                    "TOC2" => {
+                        self.xml.empty("w:ind", &[("w:left", "284")]);
+                    }
+                    "TOC3" => {
+                        self.xml.empty("w:ind", &[("w:left", "568")]);
+                    }
                     _ => {}
                 }
             } else {
@@ -407,13 +434,71 @@ impl<'a> Emitter<'a> {
     }
 
     fn write_runs(&mut self, inline: &[Inline], mark: Mark) {
-        let runs = flatten_runs_pub(inline);
         let close = self.open_mark(mark);
-        for run in &runs {
-            self.write_run(run, mark);
+        // Inline images embed as drawings between text runs (fresh renders
+        // only; revision output keeps the text-level treatment).
+        let mut pending: Vec<Inline> = Vec::new();
+        for item in inline {
+            match item {
+                Inline::Image { url, alt } if mark == Mark::None => {
+                    if !pending.is_empty() {
+                        for run in &flatten_runs_pub(&pending) {
+                            self.write_run(run, mark);
+                        }
+                        pending.clear();
+                    }
+                    self.write_image(url, alt);
+                }
+                other => pending.push(other.clone()),
+            }
+        }
+        if !pending.is_empty() {
+            for run in &flatten_runs_pub(&pending) {
+                self.write_run(run, mark);
+            }
         }
         if let Some(el) = close {
             self.xml.end(el);
+        }
+    }
+
+    /// One inline image: embed raster bytes as a drawing, or fall back to a
+    /// visible marker (missing file, external URL, format the office writers
+    /// cannot embed).
+    fn write_image(&mut self, url: &str, alt: &[Inline]) {
+        let embeddable = self
+            .assets
+            .get(url)
+            .filter(|asset| {
+                matches!(
+                    asset.format,
+                    AssetFormat::Png | AssetFormat::Jpeg | AssetFormat::Gif
+                )
+            })
+            .cloned();
+        match embeddable {
+            Some(asset) => {
+                let (rid, cx, cy) = self.media.register(&asset.bytes, asset.format);
+                let docpr = self.media.next_docpr;
+                self.media.next_docpr += 1;
+                let alt_text = Inline::plain_text(alt);
+                self.write_drawing(rid, docpr, cx, cy, &format!("Image {docpr}"), &alt_text);
+            }
+            None => {
+                let alt_text = Inline::plain_text(alt);
+                let label = if alt_text.trim().is_empty() {
+                    url.to_string()
+                } else {
+                    alt_text
+                };
+                self.write_run(
+                    &Run {
+                        text: format!("[image not embedded: {label}]"),
+                        ..Default::default()
+                    },
+                    Mark::None,
+                );
+            }
         }
     }
 
@@ -456,12 +541,56 @@ impl<'a> Emitter<'a> {
         }
     }
 
+    /// Synthesizes the static `Contents` block: heading titles linked to
+    /// in-document bookmarks — no field codes, so Word shows no
+    /// field-update/security prompt.
+    fn write_toc(&mut self, entries: &[TocEntry]) {
+        self.paragraph_open(Some("TOCHeading"), Mark::None, false);
+        self.write_runs(&[Inline::Text("Contents".to_string())], Mark::None);
+        self.paragraph_close();
+        for entry in entries {
+            let style = format!("TOC{}", entry.level.clamp(1, 3));
+            self.paragraph_open(Some(&style), Mark::None, false);
+            self.xml
+                .start("w:hyperlink", &[("w:anchor", &entry.anchor)]);
+            self.xml.start("w:r", &[]);
+            self.xml.start("w:rPr", &[]);
+            if self.direct {
+                self.xml.empty("w:color", &[("w:val", "0563C1")]);
+                self.xml.empty("w:u", &[("w:val", "single")]);
+            } else {
+                self.xml.empty("w:rStyle", &[("w:val", "Hyperlink")]);
+            }
+            self.xml.end("w:rPr");
+            self.xml.start("w:t", &[("xml:space", "preserve")]);
+            self.xml.text(&entry.text);
+            self.xml.end("w:t");
+            self.xml.end("w:r");
+            self.xml.end("w:hyperlink");
+            self.paragraph_close();
+        }
+    }
+
     pub(crate) fn write_block(&mut self, block: &Block, mark: Mark, assets: &AssetMap) {
         self.in_block = true;
         match &block.kind {
             BlockKind::Heading { level, inline } => {
                 let style = format!("Heading{}", (*level).clamp(1, 6));
-                self.write_paragraph(inline, Some(&style), mark);
+                match self.toc_anchors.get(&block.id).cloned() {
+                    Some(anchor) => {
+                        // TOC'd heading: wrap it in the bookmark its Contents
+                        // entry links to.
+                        self.paragraph_open(Some(&style), mark, false);
+                        let id = self.next_bookmark_id.to_string();
+                        self.next_bookmark_id += 1;
+                        self.xml
+                            .empty("w:bookmarkStart", &[("w:id", &id), ("w:name", &anchor)]);
+                        self.write_runs(inline, mark);
+                        self.xml.empty("w:bookmarkEnd", &[("w:id", &id)]);
+                        self.paragraph_close();
+                    }
+                    None => self.write_paragraph(inline, Some(&style), mark),
+                }
             }
             BlockKind::Paragraph { inline } => {
                 self.write_paragraph(inline, None, mark);
@@ -549,24 +678,31 @@ impl<'a> Emitter<'a> {
             );
             return;
         };
-        let (rid, cx, cy) = self.media.register(&asset.bytes);
+        let (rid, cx, cy) = self.media.register(&asset.bytes, asset.format);
         let docpr = self.media.next_docpr;
         self.media.next_docpr += 1;
 
         self.paragraph_open(None, mark, true);
         let close = self.open_mark(mark);
-        self.write_drawing(rid, docpr, cx, cy);
+        self.write_drawing(rid, docpr, cx, cy, &format!("Diagram {docpr}"), "");
         if let Some(el) = close {
             self.xml.end(el);
         }
         self.paragraph_close();
     }
 
-    fn write_drawing(&mut self, rid: String, docpr: usize, cx: u64, cy: u64) {
+    fn write_drawing(
+        &mut self,
+        rid: String,
+        docpr: usize,
+        cx: u64,
+        cy: u64,
+        name: &str,
+        descr: &str,
+    ) {
         let cx = cx.to_string();
         let cy = cy.to_string();
         let docpr_id = docpr.to_string();
-        let name = format!("Diagram {docpr}");
         self.xml.start("w:r", &[]);
         self.xml.start("w:drawing", &[]);
         self.xml.start(
@@ -583,8 +719,15 @@ impl<'a> Emitter<'a> {
             "wp:effectExtent",
             &[("l", "0"), ("t", "0"), ("r", "0"), ("b", "0")],
         );
-        self.xml
-            .empty("wp:docPr", &[("id", &docpr_id), ("name", &name)]);
+        if descr.is_empty() {
+            self.xml
+                .empty("wp:docPr", &[("id", &docpr_id), ("name", name)]);
+        } else {
+            self.xml.empty(
+                "wp:docPr",
+                &[("id", &docpr_id), ("name", name), ("descr", descr)],
+            );
+        }
         self.xml.start("wp:cNvGraphicFramePr", &[]);
         self.xml
             .empty("a:graphicFrameLocks", &[("noChangeAspect", "1")]);
@@ -599,7 +742,7 @@ impl<'a> Emitter<'a> {
         );
         self.xml.start("pic:pic", &[]);
         self.xml.start("pic:nvPicPr", &[]);
-        self.xml.empty("pic:cNvPr", &[("id", "0"), ("name", &name)]);
+        self.xml.empty("pic:cNvPr", &[("id", "0"), ("name", name)]);
         self.xml.empty("pic:cNvPicPr", &[]);
         self.xml.end("pic:nvPicPr");
         self.xml.start("pic:blipFill", &[]);
@@ -1010,6 +1153,98 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Synthesized table of contents
+
+/// One Contents entry: a heading title linked to its bookmark.
+struct TocEntry {
+    level: u8,
+    text: String,
+    anchor: String,
+}
+
+/// TOC plan: entries in document order plus the bookmark name every TOC'd
+/// heading gets (by block id), so heading emission and the Contents block
+/// agree on anchors.
+struct TocPlan {
+    entries: Vec<TocEntry>,
+    anchors: HashMap<String, String>,
+}
+
+/// `toc: true` in the frontmatter turns on the synthesized TOC.
+fn toc_enabled(fm: &docgen_core::model::Frontmatter) -> bool {
+    fm.extra
+        .get("toc")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Builds the TOC plan for a document: heading levels 1–3, document order,
+/// unique Word-safe bookmark names. `None` when the TOC is off or there is
+/// nothing to list.
+fn build_toc(doc: &Document) -> Option<TocPlan> {
+    if !toc_enabled(&doc.frontmatter) {
+        return None;
+    }
+    let mut entries = Vec::new();
+    let mut anchors = HashMap::new();
+    let mut used: HashSet<String> = HashSet::new();
+    for block in &doc.blocks {
+        let BlockKind::Heading { level, inline } = &block.kind else {
+            continue;
+        };
+        let level = (*level).clamp(1, 6);
+        if level > 3 {
+            continue;
+        }
+        let text = Inline::plain_text(inline);
+        if text.trim().is_empty() {
+            continue;
+        }
+        let name = bookmark_name(&block.id, &mut used);
+        anchors.insert(block.id.clone(), name.clone());
+        entries.push(TocEntry {
+            level,
+            text,
+            anchor: name,
+        });
+    }
+    if entries.is_empty() {
+        return None;
+    }
+    Some(TocPlan { entries, anchors })
+}
+
+/// Word bookmark names must start with a letter, hold only `[A-Za-z0-9_]`
+/// and stay ≤ 40 chars; derives a unique one from the block id.
+fn bookmark_name(id: &str, used: &mut HashSet<String>) -> String {
+    let mut base: String = id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if !base.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+        base.insert_str(0, "b_");
+    }
+    base.truncate(40);
+    let mut name = base.clone();
+    let mut n = 2;
+    while !used.insert(name.clone()) {
+        let suffix = format!("_{n}");
+        let mut cut = base.clone();
+        let keep = 40usize.saturating_sub(suffix.len()).min(cut.len());
+        cut.truncate(keep);
+        name = format!("{cut}{suffix}");
+        n += 1;
+    }
+    name
+}
+
+// ---------------------------------------------------------------------------
 // Package assembly
 
 pub(crate) fn render(
@@ -1017,8 +1252,21 @@ pub(crate) fn render(
     assets: &AssetMap,
     revision: Option<RevisionMode<'_>>,
 ) -> Result<Vec<u8>> {
-    let mut emitter = Emitter::new(revision);
+    // A synthesized TOC rides only fresh renders: revision output is a diff
+    // of existing content, not a place to inject structure.
+    let toc = if revision.is_none() {
+        build_toc(doc)
+    } else {
+        None
+    };
+    let mut emitter = Emitter::new(revision, assets);
+    if let Some(plan) = &toc {
+        emitter.toc_anchors = plan.anchors.clone();
+    }
     emitter.write_cover(&doc.frontmatter);
+    if let Some(plan) = &toc {
+        emitter.write_toc(&plan.entries);
+    }
     match emitter.revision {
         Some(mode) => {
             for step in &mode.plan.steps {
@@ -1048,7 +1296,15 @@ pub(crate) fn render(
     } else {
         doc.frontmatter.authors.join(", ")
     };
-    assemble(doc, body_xml, media, comments_xml, &creator, &date)
+    assemble(
+        doc,
+        body_xml,
+        media,
+        comments_xml,
+        &creator,
+        &date,
+        toc.is_some(),
+    )
 }
 
 fn build_comments_xml(comments: &[Comment], author: &str, date: &str) -> String {
@@ -1099,6 +1355,7 @@ fn assemble(
     comments_xml: Option<String>,
     creator: &str,
     date: &str,
+    with_toc_styles: bool,
 ) -> Result<Vec<u8>> {
     let mut rels: Vec<(String, String)> = vec![
         ("rId100".into(), "styles.xml".into()),
@@ -1132,8 +1389,24 @@ fn assemble(
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>"#,
     );
-    if !media.files.is_empty() {
-        content_types.push_str("\n<Default Extension=\"png\" ContentType=\"image/png\"/>");
+    // One Default per embedded image extension, in first-appearance order.
+    let mut image_exts: Vec<(&str, &str)> = Vec::new();
+    for (name, _) in &media.files {
+        let ext = name.rsplit('.').next().unwrap_or("");
+        let content_type = match ext {
+            "png" => "image/png",
+            "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            _ => continue,
+        };
+        if !image_exts.iter().any(|(e, _)| *e == ext) {
+            image_exts.push((ext, content_type));
+        }
+    }
+    for (ext, content_type) in image_exts {
+        content_types.push_str(&format!(
+            "\n<Default Extension=\"{ext}\" ContentType=\"{content_type}\"/>"
+        ));
     }
     let overrides: [(&str, &str); 8] = [
         (
@@ -1212,7 +1485,10 @@ fn assemble(
     package.add("docProps/app.xml", parts::APP_XML.as_bytes().to_vec());
     package.add("word/document.xml", doc_xml);
     package.add("word/_rels/document.xml.rels", document_rels.into_bytes());
-    package.add("word/styles.xml", parts::STYLES_XML.as_bytes().to_vec());
+    package.add(
+        "word/styles.xml",
+        parts::styles_xml(with_toc_styles).into_bytes(),
+    );
     package.add(
         "word/numbering.xml",
         parts::NUMBERING_XML.as_bytes().to_vec(),

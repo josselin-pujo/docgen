@@ -48,7 +48,9 @@ impl RevisionIdentity {
 }
 
 /// Renders a document to a fresh `.docx` (no revision marks).
-/// Diagram blocks must be present in `assets` as PNG bytes.
+/// Diagram blocks must be present in `assets` as PNG bytes. A `toc: true`
+/// frontmatter key synthesizes a static, internally linked table of
+/// contents (heading titles, no field codes).
 pub fn render_docx(doc: &Document, assets: &AssetMap) -> Result<Vec<u8>> {
     document::render(doc, assets, None).map_err(|e| match e {
         Error::Xml(m) | Error::Zip(m) | Error::Docx(m) | Error::Template(m) | Error::Pptx(m) => {
@@ -129,9 +131,9 @@ mod tests {
     const TINY_PNG: &[u8] = &[
         0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
         0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
-        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x62, 0x00,
-        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
-        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0B, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8,
+        0x0F, 0x04, 0x00, 0x09, 0xFB, 0x03, 0xFD, 0xFB, 0x5E, 0x6B, 0x2B, 0x00, 0x00, 0x00, 0x00,
+        0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
 
     fn png_asset() -> RenderedAsset {
@@ -179,6 +181,73 @@ mod tests {
         ] {
             assert!(zip.by_name(part).is_ok(), "missing {part}");
         }
+    }
+
+    #[test]
+    fn toc_synthesizes_linked_contents() {
+        let doc = parse_document(
+            "---\ntitle: T\ntoc: true\n---\n\n# First {#first}\n\nText.\n\n## Second {#second}\n\nMore.\n\n### Deep {#deep}\n\nMore still.\n\n#### Too deep {#deep4}\n\nNot listed.\n",
+        )
+        .unwrap();
+        let bytes = render_docx(&doc, &BTreeMap::new()).unwrap();
+        validate_docx(&bytes).unwrap();
+        let xml = unzip_document(&bytes);
+        assert!(xml.contains("Contents"), "contents heading");
+        assert_eq!(xml.matches("<w:bookmarkStart ").count(), 3, "bookmarks");
+        assert_eq!(xml.matches("<w:hyperlink w:anchor=").count(), 3, "links");
+        assert!(xml.contains("w:name=\"first\""), "anchor names");
+        assert!(xml.contains("<w:rStyle w:val=\"Hyperlink\"/>"));
+        assert!(!xml.contains("w:name=\"deep4\""), "level 4 is not listed");
+
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut styles = String::new();
+        use std::io::Read;
+        zip.by_name("word/styles.xml")
+            .expect("styles part")
+            .read_to_string(&mut styles)
+            .unwrap();
+        assert!(styles.contains("w:styleId=\"TOC1\""));
+        assert!(styles.contains("w:styleId=\"Hyperlink\""));
+    }
+
+    #[test]
+    fn no_toc_means_no_bookmarks_and_lean_styles() {
+        let doc = parse_document("---\ntitle: T\n---\n\n# First {#first}\n\nText.\n").unwrap();
+        let bytes = render_docx(&doc, &BTreeMap::new()).unwrap();
+        let xml = unzip_document(&bytes);
+        assert!(!xml.contains("w:bookmarkStart"));
+        assert!(!xml.contains("w:hyperlink"));
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut styles = String::new();
+        use std::io::Read;
+        zip.by_name("word/styles.xml")
+            .expect("styles part")
+            .read_to_string(&mut styles)
+            .unwrap();
+        assert!(!styles.contains("TOC1"), "no TOC styles without a TOC");
+    }
+
+    #[test]
+    fn inline_images_are_embedded_with_alt_text() {
+        let doc = parse_document("Before ![logo](img/logo.png) after.\n").unwrap();
+        let mut assets = BTreeMap::new();
+        assets.insert("img/logo.png".to_string(), png_asset());
+        let bytes = render_docx(&doc, &assets).unwrap();
+        validate_docx(&bytes).unwrap();
+        let xml = unzip_document(&bytes);
+        assert!(xml.contains("w:drawing"), "drawing element");
+        assert!(xml.contains("descr=\"logo\""), "alt text on docPr");
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        assert!(zip.by_name("word/media/image1.png").is_ok(), "media file");
+    }
+
+    #[test]
+    fn missing_images_fall_back_to_a_visible_marker() {
+        let doc = parse_document("![logo](img/logo.png)\n").unwrap();
+        let bytes = render_docx(&doc, &BTreeMap::new()).unwrap();
+        let xml = unzip_document(&bytes);
+        assert!(xml.contains("image not embedded"), "marker visible");
+        assert!(!xml.contains("w:drawing"), "no drawing without bytes");
     }
 
     #[test]

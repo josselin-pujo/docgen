@@ -36,6 +36,42 @@ fn golden_docx() {
     check("docx-fresh", &bytes);
 }
 
+const DOC_TOC: &str = "---\ntitle: Golden TOC\nsubtitle: fixtures\nauthors: [docgen]\ntoc: true\n---\n\n# Head {#h}\n\nText with **bold**.\n\n## Sub {#s}\n\nMore text.\n\n### Deep {#d}\n\nDeep text.\n";
+
+#[test]
+fn golden_docx_toc() {
+    let doc = docgen_core::parse_document(DOC_TOC).unwrap();
+    let bytes = docgen_office::docx::render_docx(&doc, &Default::default()).unwrap();
+    check("docx-toc", &bytes);
+}
+
+/// Minimal valid 1x1 white PNG (decodes in real decoders).
+const TINY_PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0B, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8, 0x0F, 0x04, 0x00,
+    0x09, 0xFB, 0x03, 0xFD, 0xFB, 0x5E, 0x6B, 0x2B, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
+    0xAE, 0x42, 0x60, 0x82,
+];
+
+const DOC_IMAGE: &str =
+    "---\ntitle: Golden Image\n---\n\n# Head {#h}\n\nBefore ![pixel](img/pixel.png) after.\n";
+
+#[test]
+fn golden_docx_image() {
+    let doc = docgen_core::parse_document(DOC_IMAGE).unwrap();
+    let mut assets = std::collections::BTreeMap::new();
+    assets.insert(
+        "img/pixel.png".to_string(),
+        docgen_core::assets::RenderedAsset {
+            format: docgen_core::assets::AssetFormat::Png,
+            bytes: TINY_PNG.to_vec(),
+        },
+    );
+    let bytes = docgen_office::docx::render_docx(&doc, &assets).unwrap();
+    check("docx-image", &bytes);
+}
+
 #[test]
 fn golden_pptx() {
     let doc = docgen_core::parse_document(DOC).unwrap();
