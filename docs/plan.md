@@ -85,7 +85,7 @@ verified DOCX output in real Word and LibreOffice.
   - done when: smoke PDF contains genuinely landscape pages with
     upright text (never rotated content); goldens updated
     intentionally.
-- [ ] T8: typst — fit-to-page + shrink warning
+- [x] T8: typst — fit-to-page + shrink warning
   Scale figures/diagrams to the page content box (width and height);
   deterministic warning when scale < 0.5 (D-007, D-010).
   - done when: an oversized tall diagram renders fully inside the

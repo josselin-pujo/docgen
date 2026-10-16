@@ -91,6 +91,7 @@ pub fn emit(doc: &Document, assets: &AssetMap, template: Option<&str>) -> Emitte
         used_names: HashSet::new(),
         plan: MediaPlan::resolve(doc),
         warnings: Vec::new(),
+        page_ctl: template.is_none(),
     };
 
     let mut body = String::with_capacity(4096);
@@ -118,7 +119,7 @@ pub fn emit(doc: &Document, assets: &AssetMap, template: Option<&str>) -> Emitte
                 orientation = want;
             }
         }
-        em.block(block, &mut body);
+        em.block(block, spans[i], &mut body);
     }
 
     // Document metadata is global; generated unconditionally (a custom
@@ -158,10 +159,13 @@ struct Emitter<'a> {
     used_names: HashSet<String>,
     plan: MediaPlan,
     warnings: Vec<String>,
+    /// Page controls and fit-to-page ride the default template only, where
+    /// the content box is known (D-006, D-007).
+    page_ctl: bool,
 }
 
 impl<'a> Emitter<'a> {
-    fn block(&mut self, block: &Block, out: &mut String) {
+    fn block(&mut self, block: &Block, orientation: Orientation, out: &mut String) {
         match &block.kind {
             BlockKind::Heading { level, inline } => {
                 let hashes = "=".repeat((*level).clamp(1, 6) as usize);
@@ -174,7 +178,7 @@ impl<'a> Emitter<'a> {
             BlockKind::Paragraph { inline } => match block.kind.lone_image() {
                 // A lone-image paragraph is a figure (D-004): captioned and
                 // numbered via the media plan, else exactly as before.
-                Some((url, alt)) => self.figure_block(block, Some((url, alt)), out),
+                Some((url, alt)) => self.figure_block(block, Some((url, alt)), orientation, out),
                 None => out.push_str(&format!(
                     "{}\n\n",
                     inline_markup(inline, self.assets, &mut self.files, &mut self.used_names)
@@ -186,7 +190,7 @@ impl<'a> Emitter<'a> {
                 out.push_str(&format!("{fence}{lang}\n{code}\n{fence}\n\n"));
             }
             BlockKind::Diagram { .. } => {
-                self.figure_block(block, None, out);
+                self.figure_block(block, None, orientation, out);
             }
             BlockKind::List {
                 ordered,
@@ -226,7 +230,13 @@ impl<'a> Emitter<'a> {
     /// Captioned media (a number in the media plan) gets a keep-together
     /// block, a "Figure N: caption" line and a `<fig-…>` label; uncaptioned
     /// media renders exactly as it always has.
-    fn figure_block(&mut self, block: &Block, image: Option<(&str, &[Inline])>, out: &mut String) {
+    fn figure_block(
+        &mut self,
+        block: &Block,
+        image: Option<(&str, &[Inline])>,
+        orientation: Orientation,
+        out: &mut String,
+    ) {
         // Diagram without a rendered asset: keep it visible so reviews
         // catch silent degradation.
         if image.is_none() && !self.assets.contains_key(&block.id) {
@@ -270,7 +280,7 @@ impl<'a> Emitter<'a> {
         };
         self.files
             .push((format!("assets/{name}"), asset.bytes.clone()));
-        let img = format!("#align(center)[#image(\"assets/{name}\", width: 92%)]");
+        let img = self.image_spec(block, asset, name, orientation);
 
         let plan = self.plan.figure(&block.id);
         match (
@@ -674,6 +684,139 @@ fn fence_for(code: &str) -> String {
     "`".repeat(max_run.max(2) + 1)
 }
 
+/// Default-template content box: A4 (595.276 x 841.890 pt) minus typst's
+/// 2.5 cm default margins — the geometry the fit-to-page computation and
+/// the shrink warning rely on (D-007). Custom templates are not fitted
+/// (their geometry is unknown).
+const CONTENT_W_PT: f64 = 453.543;
+const CONTENT_H_PT: f64 = 700.157;
+/// Horizontal share a media image may take (the historical 92% width).
+const MEDIA_W_SHARE: f64 = 0.92;
+/// Vertical allowance for the caption line and its spacing above it.
+const CAPTION_RESERVE_PT: f64 = 30.0;
+/// Warn when a figure must shrink below this fraction of natural size
+/// (compile-time constant, D-007).
+const SHRINK_WARN_FLOOR: f64 = 0.5;
+
+impl<'a> Emitter<'a> {
+    /// The `#image(...)` markup for a media asset: scaled to fit the page
+    /// content box (width *and* height) when its natural size overflows,
+    /// otherwise the historical 92% width. A scale below
+    /// [`SHRINK_WARN_FLOOR`] produces a deterministic warning.
+    fn image_spec(
+        &mut self,
+        block: &Block,
+        asset: &docgen_core::assets::RenderedAsset,
+        name: String,
+        orientation: Orientation,
+    ) -> String {
+        let plain = || format!("#align(center)[#image(\"assets/{name}\", width: 92%)]");
+        if !self.page_ctl {
+            return plain();
+        }
+        let Some((nat_w, nat_h)) = natural_size(&asset.bytes, asset.format) else {
+            return plain();
+        };
+        if nat_w <= 0.0 || nat_h <= 0.0 {
+            return plain();
+        }
+        let (avail_w, avail_h) = match orientation {
+            Orientation::Portrait => (CONTENT_W_PT, CONTENT_H_PT),
+            Orientation::Landscape => (CONTENT_H_PT, CONTENT_W_PT),
+        };
+        let captioned = self
+            .plan
+            .figure(&block.id)
+            .and_then(|f| f.caption.as_ref())
+            .is_some();
+        let reserve = if captioned { CAPTION_RESERVE_PT } else { 0.0 };
+        let max_w = MEDIA_W_SHARE * avail_w;
+        let max_h = (MEDIA_W_SHARE * avail_h - reserve).max(0.0);
+        let scale = (max_w / nat_w).min(max_h / nat_h).min(1.0);
+        if scale >= 1.0 {
+            return plain();
+        }
+        if scale < SHRINK_WARN_FLOOR {
+            self.warnings.push(format!(
+                "figure '{}' scales to {}% of its natural size to fit the page",
+                block.id,
+                (scale * 100.0).round() as i64
+            ));
+        }
+        format!(
+            "#align(center)[#image(\"assets/{name}\", width: {:.2}pt)]",
+            nat_w * scale
+        )
+    }
+}
+
+/// Natural size in pt. typst sizes raster pixels and SVG user units 1:1 as
+/// pt (verified empirically for this embedded version).
+fn natural_size(bytes: &[u8], format: AssetFormat) -> Option<(f64, f64)> {
+    match format {
+        AssetFormat::Svg => svg_natural_size(bytes),
+        f => docgen_core::assets::image_dimensions(bytes, f).map(|(w, h)| (w as f64, h as f64)),
+    }
+}
+
+/// Natural size of an SVG in pt, from its root `width`/`height`
+/// attributes (falling back to the `viewBox` extents when both are
+/// missing). `None` when unparseable — the caller then keeps the plain
+/// percentage width.
+fn svg_natural_size(bytes: &[u8]) -> Option<(f64, f64)> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let start = text.find("<svg")?;
+    let root = &text[start..text.len().min(start + 2048)];
+    let root = &root[..root.find('>')?];
+    let width = svg_root_attr(root, "width").and_then(|v| parse_svg_len(&v));
+    let height = svg_root_attr(root, "height").and_then(|v| parse_svg_len(&v));
+    if let (Some(w), Some(h)) = (width, height) {
+        return Some((w, h));
+    }
+    if width.is_none() && height.is_none() {
+        let vb = svg_root_attr(root, "viewBox")?;
+        let nums: Vec<f64> = vb
+            .split([',', ' '])
+            .filter_map(|t| t.trim().parse().ok())
+            .collect();
+        if nums.len() == 4 {
+            return Some((nums[2], nums[3]));
+        }
+    }
+    None
+}
+
+fn svg_root_attr(root: &str, name: &str) -> Option<String> {
+    let i = root.find(&format!("{name}="))?;
+    let rest = &root[i + name.len() + 1..];
+    let quote = rest.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let rest = &rest[1..];
+    let end = rest.find(quote)?;
+    Some(rest[..end].to_owned())
+}
+
+/// SVG length in pt: unitless and `px` are typst user units (1 pt), the
+/// absolute CSS units convert.
+fn parse_svg_len(value: &str) -> Option<f64> {
+    let value = value.trim();
+    let split = value
+        .find(|c: char| c.is_ascii_alphabetic() || c == '%')
+        .unwrap_or(value.len());
+    let n: f64 = value[..split].trim().parse().ok()?;
+    Some(match value[split..].trim() {
+        "" | "px" | "pt" => n,
+        "in" => n * 72.0,
+        "cm" => n * 72.0 / 2.54,
+        "mm" => n * 72.0 / 25.4,
+        "pc" => n * 12.0,
+        "q" => n * 72.0 / 101.6,
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -976,5 +1119,164 @@ b.
         let b_pos = body.find("= B <b>").unwrap();
         let flip_back = body.find("#set page(flipped: false)").unwrap();
         assert!(flip_back < b_pos, "{body}");
+    }
+
+    #[test]
+    fn svg_natural_size_parses_units_and_viewbox() {
+        let svg = |attrs: &str| {
+            format!(
+                "<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\" {attrs}><rect/></svg>"
+            )
+            .into_bytes()
+        };
+        assert_eq!(
+            svg_natural_size(&svg("width=\"400\" height=\"200\"")),
+            Some((400.0, 200.0))
+        );
+        assert_eq!(
+            svg_natural_size(&svg("width=\"400px\" height=\"200px\"")),
+            Some((400.0, 200.0))
+        );
+        assert_eq!(
+            svg_natural_size(&svg("width=\"10mm\" height=\"1in\"")),
+            Some((10.0 * 72.0 / 25.4, 72.0))
+        );
+        assert_eq!(
+            svg_natural_size(&svg("viewBox=\"0 0 640 480\"")),
+            Some((640.0, 480.0))
+        );
+        assert_eq!(svg_natural_size(&svg("width=\"100%\"")), None);
+    }
+
+    /// An oversized tall diagram must render fully inside the page content
+    /// box (width *and* height) — verified against the compiled frame (D-007).
+    /// Scale lands at ~0.68, above the 0.5 warning floor.
+    #[test]
+    fn oversized_figure_fits_the_page() {
+        let doc = docgen_core::parse_document(
+            "![Tall](tall.svg){#fig:tall}
+",
+        )
+        .unwrap();
+        let mut assets = AssetMap::new();
+        assets.insert(
+            "tall.svg".to_string(),
+            RenderedAsset {
+                format: AssetFormat::Svg,
+                bytes: br#"<svg xmlns="http://www.w3.org/2000/svg" width="400" height="900"><rect width="400" height="900"/></svg>"#
+                    .to_vec(),
+            },
+        );
+        let (paged, warnings) = crate::TypstRenderer::new_embedded()
+            .compile(&doc, &assets)
+            .unwrap();
+        assert_eq!(paged.pages().len(), 1, "must fit one portrait page");
+        let sizes = frame_image_sizes(&paged);
+        assert_eq!(sizes.len(), 1, "{sizes:?}");
+        let (w, h) = sizes[0];
+        // Captioned: max_h = 0.92*700.157 - 30 = 614.14; scale = 614.14/900
+        // = 0.682 → 272.9 x 614.1 pt.
+        assert!(
+            w > 272.0 && w < 274.0 && h > 613.0 && h < 615.0,
+            "expected the scaled fit, got {w}x{h} (content box 453.5x700.2)"
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    /// A deliberately huge figure is scaled below the 0.5 floor and produces
+    /// the deterministic shrink warning.
+    #[test]
+    fn huge_figure_warns_below_the_shrink_floor() {
+        let doc = docgen_core::parse_document(
+            "![Huge](huge.svg){#fig:huge}
+",
+        )
+        .unwrap();
+        let mut assets = AssetMap::new();
+        assets.insert(
+            "huge.svg".to_string(),
+            RenderedAsset {
+                format: AssetFormat::Svg,
+                bytes: br#"<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="4000"><rect width="2000" height="4000"/></svg>"#
+                    .to_vec(),
+            },
+        );
+        let renderer = crate::TypstRenderer::new_embedded();
+        let (pdf, warnings) = renderer.render_pdf(&doc, &assets).unwrap();
+        assert!(pdf.starts_with(b"%PDF"));
+        assert!(
+            warnings
+                .iter()
+                .any(|w| { w.contains("figure 'huge'") && w.contains("scales to 15%") }),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn small_figures_keep_the_percentage_width() {
+        let doc = docgen_core::parse_document(
+            "![Small](s.svg){#fig:s}
+",
+        )
+        .unwrap();
+        let mut assets = AssetMap::new();
+        assets.insert(
+            "s.svg".to_string(),
+            RenderedAsset {
+                format: AssetFormat::Svg,
+                bytes: br#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80"><rect width="100" height="80"/></svg>"#
+                    .to_vec(),
+            },
+        );
+        let out = emit(&doc, &assets, None);
+        assert!(body_of(&out).contains("width: 92%"), "{}", body_of(&out));
+        assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    }
+
+    #[test]
+    fn landscape_section_fits_against_swapped_geometry() {
+        let doc = docgen_core::parse_document(
+            "# Wide {#w page=landscape}
+
+![Tall](tall.svg){#fig:tall}
+",
+        )
+        .unwrap();
+        let mut assets = AssetMap::new();
+        assets.insert(
+            "tall.svg".to_string(),
+            RenderedAsset {
+                format: AssetFormat::Svg,
+                bytes: br#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="3000"><rect width="100" height="3000"/></svg>"#
+                    .to_vec(),
+            },
+        );
+        let out = emit(&doc, &assets, None);
+        // Captioned landscape: max_h = 0.92*453.543 - 30 = 387.26;
+        // scale = 387.26/3000 = 12.91pt wide.
+        assert!(
+            body_of(&out).contains("width: 12.91pt"),
+            "{}",
+            body_of(&out)
+        );
+    }
+
+    fn frame_image_sizes(paged: &typst_layout::PagedDocument) -> Vec<(f64, f64)> {
+        fn walk(frame: &typst::layout::Frame, out: &mut Vec<(f64, f64)>) {
+            for (_pos, item) in frame.items() {
+                match item {
+                    typst::layout::FrameItem::Group(g) => walk(&g.frame, out),
+                    typst::layout::FrameItem::Image(_, size, _) => {
+                        out.push((size.x.to_pt(), size.y.to_pt()))
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut out = Vec::new();
+        for page in paged.pages() {
+            walk(&page.frame, &mut out);
+        }
+        out
     }
 }
