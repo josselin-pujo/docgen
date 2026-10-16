@@ -161,4 +161,7 @@ verified DOCX output in real Word and LibreOffice.
 
 ## Gaps found during execution
 
-(none yet — appended by `/execute` when the plan proves insufficient)
+(none during execution; post-execution amendment 2026-10-16: user
+feedback on the samples changed D-010 (3) semantics — same-orientation
+`page=` no longer forces a break/section. Recorded as D-013 in
+`docs/decisions.md`; implemented in both renderers with no-op tests.)

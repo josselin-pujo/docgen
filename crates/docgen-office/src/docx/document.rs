@@ -953,13 +953,17 @@ impl<'a> Emitter<'a> {
             self.paragraph_close();
             for block in appendix {
                 let media = block.kind.lone_image().is_some() || block.kind.is_diagram();
-                let own = if media { block.annotations.page } else { None };
+                // Orientation-only (D-013): only a differing `page=` opens
+                // its own section.
+                let own = if media {
+                    block.annotations.page.filter(|o| *o != self.orientation())
+                } else {
+                    None
+                };
                 match own {
                     Some(fig_o) => {
                         let surrounding = self.orientation();
-                        if surrounding != fig_o {
-                            self.close_section();
-                        }
+                        self.close_section();
                         self.set_orientation(fig_o);
                         self.write_block(block, Mark::None, assets);
                         self.close_section();
@@ -1755,15 +1759,21 @@ pub(crate) fn render(
                     continue;
                 }
                 let media = block.kind.lone_image().is_some() || block.kind.is_diagram();
-                let own = if media { block.annotations.page } else { None };
+                // `page=` is orientation-only (D-013): a figure becomes its
+                // own section only when the orientation actually differs;
+                // same-orientation `page=` is a no-op.
+                let own = if media {
+                    block
+                        .annotations
+                        .page
+                        .filter(|o| *o != emitter.orientation())
+                } else {
+                    None
+                };
                 match own {
-                    // A figure with `page=` becomes its own section (D-010
-                    // (3)): close the running one, emit, close again.
                     Some(fig_o) => {
                         let surrounding = emitter.orientation();
-                        if surrounding != fig_o {
-                            emitter.close_section();
-                        }
+                        emitter.close_section();
                         emitter.set_orientation(fig_o);
                         emitter.write_block(block, Mark::None, assets);
                         emitter.close_section();

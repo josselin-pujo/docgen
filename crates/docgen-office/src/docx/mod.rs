@@ -643,4 +643,27 @@ media:
         let entry_end = entry_at + xml[entry_at..].find("</w:hyperlink>").expect("entry end");
         assert!(!xml[entry_at..entry_end].contains("p."), "{xml}");
     }
+
+    #[test]
+    fn same_orientation_page_directive_is_a_no_op() {
+        let doc = parse_document(
+            "Intro.
+
+```mermaid {#d} page=portrait caption=\"Flow\"
+graph TD
+```
+
+Outro.
+",
+        )
+        .unwrap();
+        let mut assets = BTreeMap::new();
+        assets.insert("d".to_string(), png_asset());
+        let bytes = render_docx(&doc, &assets).unwrap();
+        validate_docx(&bytes).unwrap();
+        let xml = unzip_document(&bytes);
+        // No mid-body section break: only the trailing sectPr.
+        assert_eq!(xml.matches("<w:sectPr>").count(), 1, "{xml}");
+        assert!(xml.contains("w:pStyle w:val=\"Caption\""), "{xml}");
+    }
 }

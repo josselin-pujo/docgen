@@ -122,14 +122,11 @@ pub fn emit(doc: &Document, assets: &AssetMap, template: Option<&str>) -> Emitte
         }
         if page_ctl {
             let want = spans[i];
-            // A figure's `page=` always forces its own page (D-010 (3));
-            // when the geometry changes, typst's page set rule breaks
-            // anyway, so an explicit break is only needed within one
-            // orientation.
-            let forced = block.annotations.new_page
-                || (block.annotations.page.is_some()
-                    && (block.kind.lone_image().is_some() || block.kind.is_diagram()));
-            if forced && want == orientation {
+            // `page=` is orientation-only (D-013): a geometry change breaks
+            // the page via the set rule; same-orientation `page=` is a
+            // no-op and figures flow inline (keep-together handles fits).
+            // `new-page` is the explicit break.
+            if block.annotations.new_page && want == orientation {
                 body.push_str("#pagebreak()\n\n");
             }
             if want != orientation {
@@ -1589,5 +1586,34 @@ Intro.
             .iter()
             .all(|s| s.contains("595.2755905511812pt, 841.8897637795276pt"));
         assert!(portrait_body, "{sizes:?}");
+    }
+
+    /// `page=` is orientation-only (D-013): a figure whose `page=` matches
+    /// the surrounding section flows inline — no break, no set page.
+    #[test]
+    fn same_orientation_page_directive_is_a_no_op() {
+        let doc = docgen_core::parse_document(
+            "Intro.
+
+![Flow](f.svg){#fig:f page=portrait caption=\"Flow\"}
+
+Outro.
+",
+        )
+        .unwrap();
+        let mut assets = AssetMap::new();
+        assets.insert(
+            "f.svg".to_string(),
+            RenderedAsset {
+                format: AssetFormat::Svg,
+                bytes: br#"<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><rect width="300" height="200"/></svg>"#
+                    .to_vec(),
+            },
+        );
+        let out = emit(&doc, &assets, None);
+        let body = body_of(&out);
+        assert!(!body.contains("#pagebreak()"), "{body}");
+        assert!(!body.contains("#set page"), "{body}");
+        assert!(body.contains("Figure 1: Flow"), "{body}");
     }
 }

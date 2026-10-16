@@ -81,6 +81,13 @@ forward. Current round source: `docs/notes/large-diagrams-and-page-control.md`
 - Rationale: reservations are cheap now, expensive to retrofit.
 - Alternatives rejected: designing citation syntax now — speculative.
 
+## D-013: `page=` is orientation-only — no forced break on same orientation
+- Status: accepted (amends D-010 (3))
+- Context: user feedback 2026-10-16 after seeing the samples: a figure carrying `page=` for the orientation it already sits in still forced a page break (typst) and its own section (DOCX), so relocating media reshuffled layout even with no geometry change involved.
+- Decision: a `page=` directive only takes effect when the orientation differs from the current section — then it starts a fresh page (typst page set rule / DOCX own section) as before. Same-orientation `page=` is a no-op: figures flow inline, and keep-together handles page fits. `new-page` remains the explicit break mechanism.
+- Rationale: layout stability when figures move — breaks belong to `new-page` and keep-together; orientation belongs to `page=`.
+- Alternatives rejected: keeping "always own page" — the directive leaked into layout regardless of geometry; dropping own-sections for differing orientations — would lose the geometry change itself.
+
 ## D-012: pptx output deprecation
 - Status: deferred
 - Context: user stated 2026-10-16 they are considering deprecating pptx output altogether, counting on DOCX export + human copy-paste for deck-shaped needs.
