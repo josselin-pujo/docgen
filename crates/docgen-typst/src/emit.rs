@@ -558,6 +558,18 @@ mod tests {
         assert!(meta.contains("\"nested\": (\"k\": \"v\")"), "{meta}");
     }
 
+    #[test]
+    fn media_map_flows_into_meta() {
+        let doc = docgen_core::parse_document(
+            "---\ntitle: T\nmedia:\n  placement: appendix\n  index: true\n---\n\nx\n",
+        )
+        .unwrap();
+        let meta = emit_meta(&doc);
+        assert!(meta.contains("\"media\": ("), "{meta}");
+        assert!(meta.contains("\"placement\": \"appendix\""), "{meta}");
+        assert!(meta.contains("\"index\": true"), "{meta}");
+    }
+
     fn named_png() -> docgen_core::assets::RenderedAsset {
         docgen_core::assets::RenderedAsset {
             format: AssetFormat::Png,

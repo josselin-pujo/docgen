@@ -92,6 +92,39 @@ pub struct Frontmatter {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+impl Frontmatter {
+    /// Typed view of the document-level `media:` map (D-003, D-009):
+    /// `media: { placement: inline|appendix, index: bool }`. The map itself
+    /// stays in `extra`, so renderer metadata passthrough (typst `meta`)
+    /// still carries the values.
+    pub fn media(&self) -> MediaConfig {
+        match self.extra.get("media") {
+            Some(serde_json::Value::Null) | None => MediaConfig::default(),
+            Some(v) => serde_json::from_value(v.clone()).unwrap_or_default(),
+        }
+    }
+}
+
+/// Document-level media defaults from frontmatter (D-003): where media
+/// renders unless a block overrides it, and whether to emit a figures
+/// index. Zero-value = fully inline, no index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MediaConfig {
+    #[serde(default)]
+    pub placement: Placement,
+    #[serde(default)]
+    pub index: bool,
+}
+
+impl Default for MediaConfig {
+    fn default() -> Self {
+        Self {
+            placement: Placement::Inline,
+            index: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Block {
     /// Stable identifier: explicit (`{#id}` heading attribute, fenced-block
@@ -152,9 +185,10 @@ impl Annotations {
 }
 
 /// Where a media block renders (D-003).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Placement {
+    #[default]
     Inline,
     Appendix,
 }

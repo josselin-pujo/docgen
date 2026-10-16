@@ -53,6 +53,16 @@ pub fn parse(yaml: &str) -> Result<Frontmatter> {
     {
         fm.date = scalar_to_string(&v);
     }
+    // The `media:` map is read typed ([`Frontmatter::media`]); reject
+    // malformed shapes here so typos fail loud instead of silently
+    // falling back to defaults.
+    if let Some(v) = fm.extra.get("media")
+        && !v.is_null()
+    {
+        serde_json::from_value::<crate::model::MediaConfig>(v.clone()).map_err(|e| {
+            Error::Frontmatter(format!("invalid `media:` map (expected placement: inline|appendix, index: bool): {e}"))
+        })?;
+    }
     Ok(fm)
 }
 
@@ -105,5 +115,38 @@ mod tests {
         assert_eq!(fm.authors, ["a", "b"]);
         assert_eq!(fm.extra.get("unknown").and_then(|v| v.as_i64()), Some(42));
         assert_eq!(fm.version.as_deref(), Some("1.2"));
+    }
+
+    #[test]
+    fn media_defaults_when_absent() {
+        let fm = parse("title: T\n").unwrap();
+        assert_eq!(fm.media(), crate::model::MediaConfig::default());
+        assert_eq!(fm.media().placement, crate::model::Placement::Inline);
+        assert!(!fm.media().index);
+    }
+
+    #[test]
+    fn media_explicit_values_and_partial_maps() {
+        let fm = parse("media:\n  placement: appendix\n  index: true\n").unwrap();
+        assert_eq!(fm.media().placement, crate::model::Placement::Appendix);
+        assert!(fm.media().index);
+        // The map stays in extra (renderer meta passthrough).
+        assert!(fm.extra.contains_key("media"));
+
+        let fm = parse("media:\n  index: true\n").unwrap();
+        assert_eq!(fm.media().placement, crate::model::Placement::Inline);
+        assert!(fm.media().index);
+    }
+
+    #[test]
+    fn media_null_map_means_defaults() {
+        let fm = parse("media:\n").unwrap();
+        assert_eq!(fm.media(), crate::model::MediaConfig::default());
+    }
+
+    #[test]
+    fn media_malformed_map_is_an_error() {
+        assert!(parse("media:\n  placement: inlane\n").is_err());
+        assert!(parse("media: 5\n").is_err());
     }
 }

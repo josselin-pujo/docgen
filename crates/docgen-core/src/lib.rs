@@ -20,6 +20,6 @@ pub mod parse;
 pub use error::{Error, Result};
 pub use model::{
     Annotations, Block, BlockKind, DiagramFormat, Document, Frontmatter, Inline, ListItem,
-    Orientation, Placement,
+    MediaConfig, Orientation, Placement,
 };
 pub use parse::parse_document;
