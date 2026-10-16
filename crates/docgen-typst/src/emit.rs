@@ -24,7 +24,7 @@
 use std::collections::HashSet;
 
 use docgen_core::assets::{AssetFormat, AssetMap};
-use docgen_core::media::{FigurePlan, MediaPlan, fig_anchor, page_spans, resolve_anchor};
+use docgen_core::media::{MediaPlan, fig_anchor, page_spans, resolve_anchor};
 use docgen_core::model::{Block, BlockKind, Document, Inline, ListItem, Orientation, Placement};
 
 /// Names of the virtual files the template can address.
@@ -95,8 +95,7 @@ pub fn emit(doc: &Document, assets: &AssetMap, template: Option<&str>) -> Emitte
     };
 
     let mut body = String::with_capacity(4096);
-    let mut appendix = String::new();
-    let mut appendix_count = 0usize;
+    let mut appendix: Vec<(&Block, Orientation)> = Vec::new();
     // Page controls ride the default template only — custom templates own
     // their page setup (D-006).
     let page_ctl = template.is_none();
@@ -118,9 +117,7 @@ pub fn emit(doc: &Document, assets: &AssetMap, template: Option<&str>) -> Emitte
                     esc(&label)
                 ));
             }
-            let image = block.kind.lone_image();
-            em.figure_block(block, image, spans[i], &mut appendix);
-            appendix_count += 1;
+            appendix.push((block, spans[i]));
             continue;
         }
         if page_ctl {
@@ -143,7 +140,19 @@ pub fn emit(doc: &Document, assets: &AssetMap, template: Option<&str>) -> Emitte
         }
         em.block(block, spans[i], &mut body);
     }
-    em.back_matter(&mut body, &appendix, appendix_count, orientation);
+    if page_ctl {
+        em.back_matter(&mut body, &appendix, orientation);
+    } else {
+        // Custom templates own page setup: no orientation control, the
+        // appendix figures render in sequence (D-006).
+        let mut plain = String::new();
+        for (block, _) in &appendix {
+            let image = block.kind.lone_image();
+            em.figure_block(block, image, Orientation::Portrait, &mut plain);
+        }
+        em.back_matter_index_only(&mut plain);
+        body.push_str(&plain);
+    }
 
     // Document metadata is global; generated unconditionally (a custom
     // template may override it with its own `#set document(...)`).
@@ -530,69 +539,95 @@ impl<'a> Emitter<'a> {
     /// inherit the document orientation — an open landscape section is
     /// closed here explicitly.
     fn back_matter(
-        &self,
+        &mut self,
         body: &mut String,
-        appendix: &str,
-        appendix_count: usize,
+        appendix: &[(&Block, Orientation)],
         orientation: Orientation,
     ) {
-        let index_entries: Vec<&FigurePlan> = self.plan.index_figures().collect();
+        let index_entries: Vec<(String, u32, String)> = self
+            .plan
+            .index_figures()
+            .filter_map(|f| {
+                let n = f.number?;
+                Some((f.block_id.clone(), n, f.caption.clone()?))
+            })
+            .collect();
         let with_index = self.plan.index_requested && !index_entries.is_empty();
-        if appendix_count == 0 && !with_index {
+        if appendix.is_empty() && !with_index {
             return;
         }
-        if orientation != Orientation::Portrait {
-            // The page set rule starts the fresh page itself.
-            body.push_str(
-                "#set page(flipped: false)
-
-",
-            );
+        // The back matter inherits the document orientation (D-010 (1));
+        // an open landscape section is closed explicitly. The page set rule
+        // starts the fresh page itself.
+        let mut current = orientation;
+        if current != Orientation::Portrait {
+            body.push_str("#set page(flipped: false)\n\n");
+            current = Orientation::Portrait;
         } else {
-            body.push_str(
-                "#pagebreak()
-
-",
-            );
+            body.push_str("#pagebreak()\n\n");
         }
-        if appendix_count > 0 {
-            body.push_str(
-                "#heading(numbering: none, level: 1)[Figures]
-
-",
-            );
-            body.push_str(appendix);
+        let mut broke_page = false;
+        if !appendix.is_empty() {
+            body.push_str("#heading(numbering: none, level: 1)[Figures]\n\n");
+            for (block, want) in appendix {
+                // Figures opt into landscape individually, inside the
+                // appendix too (D-010 (1)).
+                if *want != current {
+                    let flipped = matches!(want, Orientation::Landscape);
+                    body.push_str(&format!("#set page(flipped: {flipped})\n\n"));
+                    current = *want;
+                    broke_page = true;
+                }
+                let image = block.kind.lone_image();
+                self.figure_block(block, image, *want, body);
+            }
+            if current != Orientation::Portrait {
+                body.push_str("#set page(flipped: false)\n\n");
+                broke_page = true;
+            }
         }
         if with_index {
-            if appendix_count > 0 {
-                body.push_str(
-                    "#pagebreak()
-
-",
-                );
+            // Fresh page for the index unless a set page rule above just
+            // started one.
+            if !broke_page {
+                body.push_str("#pagebreak()\n\n");
             }
-            body.push_str(
-                "#heading(numbering: none, level: 1)[List of Figures]
-
-",
-            );
-            for f in index_entries {
-                body.push_str(&self.index_entry(f));
+            body.push_str("#heading(numbering: none, level: 1)[List of Figures]\n\n");
+            for (block_id, number, caption) in &index_entries {
+                body.push_str(&self.index_entry(block_id, *number, caption));
             }
+        }
+    }
+
+    /// Index-only back matter for custom templates (no page control): the
+    /// index follows the appendix figures directly.
+    fn back_matter_index_only(&self, body: &mut String) {
+        let index_entries: Vec<(String, u32, String)> = self
+            .plan
+            .index_figures()
+            .filter_map(|f| {
+                let n = f.number?;
+                Some((f.block_id.clone(), n, f.caption.clone()?))
+            })
+            .collect();
+        if !self.plan.index_requested || index_entries.is_empty() {
+            return;
+        }
+        body.push_str("#heading(numbering: none, level: 1)[List of Figures]\n\n");
+        for (block_id, number, caption) in &index_entries {
+            body.push_str(&self.index_entry(block_id, *number, caption));
         }
     }
 
     /// One index line: "Figure N: caption", filled to a right-aligned page
     /// number resolved from the figure's label.
-    fn index_entry(&self, f: &FigurePlan) -> String {
-        let anchor = typst_label(&fig_anchor(&f.block_id));
+    fn index_entry(&self, block_id: &str, number: u32, caption: &str) -> String {
+        let anchor = typst_label(&fig_anchor(block_id));
         format!(
-            "#context[#link(<{anchor}>)[Figure {n}]: {caption} #h(1fr) p. #query(<{anchor}>).first().location().page()]
-
-",
+            "#context[#link(<{anchor}>)[Figure {n}]: {caption} #h(1fr) p. #query(<{anchor}>).first().location().page()]\n\n",
             anchor = anchor,
-            n = f.number.unwrap_or_default(),
-            caption = esc(f.caption.as_deref().unwrap_or("")),
+            n = number,
+            caption = esc(caption),
         )
     }
 }
@@ -792,10 +827,12 @@ impl<'a> Emitter<'a> {
         let reserve = if captioned { CAPTION_RESERVE_PT } else { 0.0 };
         let max_w = MEDIA_W_SHARE * avail_w;
         let max_h = (MEDIA_W_SHARE * avail_h - reserve).max(0.0);
-        let scale = (max_w / nat_w).min(max_h / nat_h).min(1.0);
-        if scale >= 1.0 {
-            return plain();
-        }
+        // Both bounds always bind — growing small media exactly like the
+        // historical 92% width did (the width bound wins for anything not
+        // taller than the content box), while tall media caps at the
+        // content height instead of overflowing it. Never fall back to a
+        // bare percentage width: it knows nothing about height.
+        let scale = (max_w / nat_w).min(max_h / nat_h);
         if scale < SHRINK_WARN_FLOOR {
             self.warnings.push(format!(
                 "figure '{}' scales to {}% of its natural size to fit the page",
@@ -1273,12 +1310,11 @@ b.
     }
 
     #[test]
-    fn small_figures_keep_the_percentage_width() {
-        let doc = docgen_core::parse_document(
-            "![Small](s.svg){#fig:s}
-",
-        )
-        .unwrap();
+    fn small_figures_grow_to_the_width_bound_only() {
+        // 100x80 natural: the width bound (0.92*453.543 = 417.26) wins over
+        // the height bound, so the rendered size matches the historical 92%
+        // width — but as an absolute width, so height always stays bounded.
+        let doc = docgen_core::parse_document("![Small](s.svg){#fig:s}\n").unwrap();
         let mut assets = AssetMap::new();
         assets.insert(
             "s.svg".to_string(),
@@ -1289,8 +1325,45 @@ b.
             },
         );
         let out = emit(&doc, &assets, None);
-        assert!(body_of(&out).contains("width: 92%"), "{}", body_of(&out));
+        assert!(
+            body_of(&out).contains("width: 417.26pt"),
+            "{}",
+            body_of(&out)
+        );
         assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    }
+
+    /// The regression behind the clipped diagrams: a figure whose natural
+    /// size fits the content box must still be bounded by BOTH dimensions
+    /// once the 92%-width growth would exceed the height (it used to fall
+    /// back to a bare `width: 92%`, which knows nothing about height).
+    #[test]
+    fn width_growth_never_exceeds_the_height_bound() {
+        // 200x188 on a landscape page: natural fits, but 92% width would
+        // render 644x604 on a 700.2x453.5 page — clipped. The height bound
+        // (0.92*453.543-30 = 387.26) must bind first: 411.98 x 387.26.
+        let doc =
+            docgen_core::parse_document("# W {#w page=landscape}\n\n![Sys](sys.svg){#fig:sys}\n")
+                .unwrap();
+        let mut assets = AssetMap::new();
+        assets.insert(
+            "sys.svg".to_string(),
+            RenderedAsset {
+                format: AssetFormat::Svg,
+                bytes: br#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="188"><rect width="200" height="188"/></svg>"#
+                    .to_vec(),
+            },
+        );
+        let (paged, warnings) = crate::TypstRenderer::new_embedded()
+            .compile(&doc, &assets)
+            .unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(paged.pages().len(), 1);
+        let (w, h) = frame_image_sizes(&paged)[0];
+        assert!(
+            (410.0..414.0).contains(&w) && (386.0..388.5).contains(&h),
+            "expected the height-bounded fit, got {w}x{h}"
+        );
     }
 
     #[test]
@@ -1457,5 +1530,64 @@ Wide section after which the back matter resets orientation.
             last.contains("595.2755905511812pt, 841.8897637795276pt"),
             "{last}"
         );
+    }
+
+    /// A figure opting into landscape renders on a real landscape page even
+    /// inside the portrait appendix (D-010 (1)); the sections after it are
+    /// portrait again.
+    #[test]
+    fn appendix_figure_can_opt_into_landscape() {
+        let doc = docgen_core::parse_document(
+            "---
+title: T
+media:
+  placement: appendix
+  index: true
+---
+
+Intro.
+
+![Big](big.svg){#fig:big page=landscape}
+
+![Small](small.svg){#fig:small}
+",
+        )
+        .unwrap();
+        let mut assets = AssetMap::new();
+        for name in ["big.svg", "small.svg"] {
+            assets.insert(
+                name.to_string(),
+                RenderedAsset {
+                    format: AssetFormat::Svg,
+                    bytes: br#"<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><rect width="300" height="200"/></svg>"#
+                        .to_vec(),
+                },
+            );
+        }
+        let (paged, warnings) = crate::TypstRenderer::new_embedded()
+            .compile(&doc, &assets)
+            .unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let sizes: Vec<String> = paged
+            .pages()
+            .iter()
+            .map(|p| format!("{:?}", p.frame.size()))
+            .collect();
+        // Somewhere after the portrait body there is a landscape appendix
+        // page, and the trailing index page is portrait again.
+        let landscape_at = sizes
+            .iter()
+            .position(|s| s.contains("841.8897637795276pt, 595.2755905511812pt"));
+        assert!(landscape_at.is_some(), "{sizes:?}");
+        let last = sizes.last().unwrap();
+        assert!(
+            last.contains("595.2755905511812pt, 841.8897637795276pt"),
+            "index page must be portrait: {sizes:?}"
+        );
+        // The landscape page sits after the portrait body pages.
+        let portrait_body = sizes[..landscape_at.unwrap()]
+            .iter()
+            .all(|s| s.contains("595.2755905511812pt, 841.8897637795276pt"));
+        assert!(portrait_body, "{sizes:?}");
     }
 }
