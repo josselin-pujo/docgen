@@ -958,4 +958,55 @@ mod tests {
             other => panic!("unexpected {other:?}"),
         }
     }
+
+    // -- annotation neutrality (D-008) -----------------------------------
+
+    #[test]
+    fn annotations_alone_are_not_a_change() {
+        // Same visible content and same ids (explicit, so the join key is
+        // constant); only attribute annotations differ.
+        let plain = parse_document(
+            "# Results {#r}\n\nIntro text.\n\n```mermaid {#d}\ngraph TD\nA-->B\n```\n\n![Shot](img/x.png)\n",
+        )
+        .unwrap();
+        let annotated = parse_document(
+            "# Results {#r page=landscape new-page}\n\nIntro text.\n\n```mermaid {#d} place=appendix caption=\"Diagram\" keep=false\ngraph TD\nA-->B\n```\n\n![Shot](img/x.png){place=appendix}\n",
+        )
+        .unwrap();
+        let diff = diff_documents(&plain, &annotated);
+        assert!(diff.is_empty(), "annotations must be diff-invisible: {diff:?}");
+        let diff = diff_documents(&annotated, &plain);
+        assert!(diff.is_empty(), "symmetric: {diff:?}");
+    }
+
+    #[test]
+    fn annotations_do_not_disturb_content_diffs() {
+        let old = parse_document("# R {#r}\n\nHello world.\n\n```mermaid {#d}\nA-->B\n```\n")
+            .unwrap();
+        let new_plain = parse_document("# R {#r}\n\nHello brave world.\n\n```mermaid {#d}\nA-->C\n```\n")
+            .unwrap();
+        let new_ann = parse_document(
+            "# R {#r page=landscape}\n\nHello brave world.\n\n```mermaid {#d} place=appendix\nA-->C\n```\n",
+        )
+        .unwrap();
+        let a = diff_documents(&old, &new_plain);
+        let b = diff_documents(&old, &new_ann);
+        // Same change set (ids, positions, kinds) — only the embedded block
+        // payloads may carry annotations.
+        let shape = |d: &DocumentDiff| {
+            d.changes
+                .iter()
+                .map(|c| match c {
+                    BlockChange::Added { at, .. } => format!("add@{at}"),
+                    BlockChange::Removed { at, .. } => format!("rem@{at}"),
+                    BlockChange::Moved { id, from, to } => format!("move {id} {from}->{to}"),
+                    BlockChange::Changed { id, at, content, .. } => {
+                        format!("chg {id}@{at} {content:?}")
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(shape(&a), shape(&b));
+        assert_eq!(a.summary(), b.summary());
+    }
 }
