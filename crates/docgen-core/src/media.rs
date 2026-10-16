@@ -8,7 +8,7 @@
 //! document-wide figure number. Media without a caption still relocates but
 //! renders unnumbered and stays out of the figures index.
 
-use crate::model::{BlockKind, Document, Frontmatter, Placement};
+use crate::model::{BlockKind, Document, Frontmatter, Orientation, Placement};
 
 /// One media block's resolved plan, in document order inside
 /// [`MediaPlan::figures`].
@@ -163,6 +163,43 @@ pub fn resolve_anchor(fragment: &str) -> String {
         Some(rest) => fig_anchor(rest),
         None => fragment.to_owned(),
     }
+}
+
+/// Effective page orientation for every top-level block (D-010): a
+/// heading's `page=` spans its section, ending at the next heading of level
+/// ≤ its own; a figure's `page=` applies to the figure alone and wins over
+/// an enclosing heading span. Blocks outside any span are portrait (the
+/// document default).
+pub fn page_spans(doc: &Document) -> Vec<Orientation> {
+    let mut spans = vec![Orientation::Portrait; doc.blocks.len()];
+    for (i, block) in doc.blocks.iter().enumerate() {
+        let BlockKind::Heading { level, .. } = &block.kind else {
+            continue;
+        };
+        let Some(o) = block.annotations.page else {
+            continue;
+        };
+        spans[i] = o;
+        let mut j = i + 1;
+        while j < doc.blocks.len() {
+            if let BlockKind::Heading { level: next, .. } = &doc.blocks[j].kind
+                && *next <= *level
+            {
+                break;
+            }
+            spans[j] = o;
+            j += 1;
+        }
+    }
+    for (i, block) in doc.blocks.iter().enumerate() {
+        let Some(o) = block.annotations.page else {
+            continue;
+        };
+        if block.kind.lone_image().is_some() || block.kind.is_diagram() {
+            spans[i] = o;
+        }
+    }
+    spans
 }
 
 #[cfg(test)]
@@ -335,5 +372,54 @@ mod tests {
     #[test]
     fn anchors_are_namespaced_and_stable() {
         assert_eq!(fig_anchor("arch"), "fig-arch");
+    }
+
+    #[test]
+    fn page_spans_follow_sections_and_figures() {
+        let d = parse_document(
+            "# A {page=landscape}
+
+a.
+
+## A1
+
+a1.
+
+# B
+
+b.
+
+![x](x.png){page=portrait}
+",
+        )
+        .unwrap();
+        let spans = page_spans(&d);
+        let kinds: Vec<String> = d
+            .blocks
+            .iter()
+            .zip(&spans)
+            .map(|(b, o)| {
+                let text = match &b.kind {
+                    crate::model::BlockKind::Heading { inline, .. }
+                    | crate::model::BlockKind::Paragraph { inline } => {
+                        crate::model::Inline::plain_text(inline)
+                    }
+                    _ => String::new(),
+                };
+                format!("{text}:{o:?}")
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                "A:Landscape",
+                "a.:Landscape",
+                "A1:Landscape",
+                "a1.:Landscape",
+                "B:Portrait",
+                "b.:Portrait",
+                "x:Portrait",
+            ]
+        );
     }
 }

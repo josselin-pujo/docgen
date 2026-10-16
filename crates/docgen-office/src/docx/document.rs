@@ -6,8 +6,10 @@ use std::collections::{HashMap, HashSet};
 
 use docgen_core::assets::{AssetFormat, AssetMap};
 use docgen_core::diff::{ContentChange, DiffPlan, LineOp, Run, RunOp, Step, flatten_runs_pub};
-use docgen_core::media::{MediaPlan, fig_anchor, resolve_anchor};
-use docgen_core::model::{Block, BlockKind, DiagramFormat, Document, Inline, ListItem, TableRow};
+use docgen_core::media::{MediaPlan, fig_anchor, page_spans, resolve_anchor};
+use docgen_core::model::{
+    Block, BlockKind, DiagramFormat, Document, Inline, ListItem, Orientation, TableRow,
+};
 use quick_xml::Reader;
 
 use super::RevisionIdentity;
@@ -199,6 +201,9 @@ pub(crate) struct Emitter<'a> {
     /// Consumed by the next `paragraph_open`: start it on a fresh page
     /// (`new-page`, D-002).
     pending_page_break: bool,
+    /// Orientation of the section currently being emitted; a paragraph
+    /// carrying `w:sectPr` ends it (D-005, D-010).
+    current_orientation: Orientation,
     next_bookmark_id: usize,
 }
 
@@ -223,6 +228,7 @@ impl<'a> Emitter<'a> {
             plan: MediaPlan::default(),
             pending_keep_next: false,
             pending_page_break: false,
+            current_orientation: Orientation::Portrait,
             next_bookmark_id: 1,
         }
     }
@@ -247,6 +253,7 @@ impl<'a> Emitter<'a> {
             plan: MediaPlan::default(),
             pending_keep_next: false,
             pending_page_break: false,
+            current_orientation: Orientation::Portrait,
             next_bookmark_id: 1,
         }
     }
@@ -830,6 +837,64 @@ impl<'a> Emitter<'a> {
         self.paragraph_open(Some("Caption"), Mark::None, false);
         self.write_runs(&[Inline::Text(text.to_string())], Mark::None);
         self.paragraph_close();
+    }
+
+    // -- sections (D-005, D-010) -----------------------------------------
+
+    fn orientation(&self) -> Orientation {
+        self.current_orientation
+    }
+
+    fn set_orientation(&mut self, o: Orientation) {
+        self.current_orientation = o;
+    }
+
+    /// Ends the current section: an empty paragraph whose `w:pPr/w:sectPr`
+    /// carries the geometry of the section that is closing. The body's
+    /// final section is described by the trailing sectPr instead.
+    fn close_section(&mut self) {
+        self.xml.start("w:p", &[]);
+        self.xml.start("w:pPr", &[]);
+        self.xml.start("w:sectPr", &[]);
+        self.write_pg_sz(self.current_orientation);
+        self.write_pg_mar();
+        self.xml.end("w:sectPr");
+        self.xml.end("w:pPr");
+        self.xml.end("w:p");
+    }
+
+    fn write_pg_sz(&mut self, orientation: Orientation) {
+        match orientation {
+            Orientation::Portrait => {
+                self.xml
+                    .empty("w:pgSz", &[("w:w", "11906"), ("w:h", "16838")]);
+            }
+            Orientation::Landscape => {
+                self.xml.empty(
+                    "w:pgSz",
+                    &[
+                        ("w:w", "16838"),
+                        ("w:h", "11906"),
+                        ("w:orient", "landscape"),
+                    ],
+                );
+            }
+        }
+    }
+
+    fn write_pg_mar(&mut self) {
+        self.xml.empty(
+            "w:pgMar",
+            &[
+                ("w:top", "1134"),
+                ("w:right", "1134"),
+                ("w:bottom", "1134"),
+                ("w:left", "1134"),
+                ("w:header", "709"),
+                ("w:footer", "709"),
+                ("w:gutter", "0"),
+            ],
+        );
     }
 
     /// A captioned lone-image paragraph as a figure: centered embedded
@@ -1572,11 +1637,35 @@ pub(crate) fn render(
             }
         }
         None => {
-            for block in &doc.blocks {
-                emitter.write_block(block, Mark::None, assets);
+            let spans = page_spans(doc);
+            for (i, block) in doc.blocks.iter().enumerate() {
+                let media = block.kind.lone_image().is_some() || block.kind.is_diagram();
+                let own = if media { block.annotations.page } else { None };
+                match own {
+                    // A figure with `page=` becomes its own section (D-010
+                    // (3)): close the running one, emit, close again.
+                    Some(fig_o) => {
+                        let surrounding = emitter.orientation();
+                        if surrounding != fig_o {
+                            emitter.close_section();
+                        }
+                        emitter.set_orientation(fig_o);
+                        emitter.write_block(block, Mark::None, assets);
+                        emitter.close_section();
+                        emitter.set_orientation(surrounding);
+                    }
+                    None => {
+                        if spans[i] != emitter.orientation() {
+                            emitter.close_section();
+                            emitter.set_orientation(spans[i]);
+                        }
+                        emitter.write_block(block, Mark::None, assets);
+                    }
+                }
             }
         }
     }
+    let final_orientation = emitter.orientation();
 
     let identity = emitter.identity();
     let (author, date) = (identity.0.to_string(), identity.1.to_string());
@@ -1602,6 +1691,7 @@ pub(crate) fn render(
         &creator,
         &date,
         toc.is_some(),
+        final_orientation,
     )
 }
 
@@ -1646,6 +1736,7 @@ fn rel_kind(target: &str) -> &'static str {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn assemble(
     doc: &Document,
     body_xml: Vec<u8>,
@@ -1654,6 +1745,7 @@ fn assemble(
     creator: &str,
     date: &str,
     with_toc_styles: bool,
+    final_orientation: Orientation,
 ) -> Result<Vec<u8>> {
     let mut rels: Vec<(String, String)> = vec![
         ("rId100".into(), "styles.xml".into()),
@@ -1769,9 +1861,19 @@ fn assemble(
     )
     .into_bytes();
     doc_xml.extend_from_slice(&body_xml);
-    doc_xml.extend_from_slice(
-        b"<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"1134\" w:right=\"1134\" w:bottom=\"1134\" w:left=\"1134\" w:header=\"709\" w:footer=\"709\" w:gutter=\"0\"/></w:sectPr></w:body></w:document>",
+    let mut trailing = String::from("<w:sectPr>");
+    match final_orientation {
+        Orientation::Portrait => {
+            trailing.push_str("<w:pgSz w:w=\"11906\" w:h=\"16838\"/>");
+        }
+        Orientation::Landscape => {
+            trailing.push_str("<w:pgSz w:w=\"16838\" w:h=\"11906\" w:orient=\"landscape\"/>");
+        }
+    }
+    trailing.push_str(
+        "<w:pgMar w:top=\"1134\" w:right=\"1134\" w:bottom=\"1134\" w:left=\"1134\" w:header=\"709\" w:footer=\"709\" w:gutter=\"0\"/></w:sectPr></w:body></w:document>",
     );
+    doc_xml.extend_from_slice(trailing.as_bytes());
 
     let mut package = Package::new();
     package.add("[Content_Types].xml", content_types.into_bytes());

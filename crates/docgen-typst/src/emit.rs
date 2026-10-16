@@ -24,7 +24,7 @@
 use std::collections::HashSet;
 
 use docgen_core::assets::{AssetFormat, AssetMap};
-use docgen_core::media::{FigurePlan, MediaPlan, fig_anchor, resolve_anchor};
+use docgen_core::media::{FigurePlan, MediaPlan, fig_anchor, page_spans, resolve_anchor};
 use docgen_core::model::{Block, BlockKind, Document, Inline, ListItem, Orientation, Placement};
 
 /// Names of the virtual files the template can address.
@@ -595,43 +595,6 @@ impl<'a> Emitter<'a> {
             caption = esc(f.caption.as_deref().unwrap_or("")),
         )
     }
-}
-
-/// Effective page orientation for every top-level block (D-010): a
-/// heading's `page=` spans its section, ending at the next heading of level
-/// ≤ its own; a figure's `page=` applies to the figure alone and wins over
-/// an enclosing heading span. Blocks outside any span are portrait (the
-/// document default).
-fn page_spans(doc: &Document) -> Vec<Orientation> {
-    let mut spans = vec![Orientation::Portrait; doc.blocks.len()];
-    for (i, block) in doc.blocks.iter().enumerate() {
-        let BlockKind::Heading { level, .. } = &block.kind else {
-            continue;
-        };
-        let Some(o) = block.annotations.page else {
-            continue;
-        };
-        spans[i] = o;
-        let mut j = i + 1;
-        while j < doc.blocks.len() {
-            if let BlockKind::Heading { level: next, .. } = &doc.blocks[j].kind
-                && *next <= *level
-            {
-                break;
-            }
-            spans[j] = o;
-            j += 1;
-        }
-    }
-    for (i, block) in doc.blocks.iter().enumerate() {
-        let Some(o) = block.annotations.page else {
-            continue;
-        };
-        if block.kind.lone_image().is_some() || block.kind.is_diagram() {
-            spans[i] = o;
-        }
-    }
-    spans
 }
 
 /// Typst label names allow alphanumerics plus `_-.` and `:`; anything else

@@ -509,4 +509,74 @@ graph TD
         assert!(xml.contains("Caption"), "caption still present: {xml}");
         assert!(!xml.contains("<w:keepNext/>"), "{xml}");
     }
+
+    #[test]
+    fn mixed_orientation_builds_mid_body_sections() {
+        let doc = parse_document(
+            "# A {#a}
+
+Portrait.
+
+# Wide {#w page=landscape}
+
+Wide section.
+
+## Deep {#d}
+
+Still wide.
+
+# B {#b}
+
+Portrait again.
+",
+        )
+        .unwrap();
+        let bytes = render_docx(&doc, &BTreeMap::new()).unwrap();
+        validate_docx(&bytes).unwrap();
+        let xml = unzip_document(&bytes);
+        // The landscape section closes mid-body; the final section is
+        // portrait (trailing sectPr): portrait | landscape | portrait.
+        assert_eq!(xml.matches("<w:sectPr>").count(), 3, "{xml}");
+        assert!(
+            xml.contains("<w:pgSz w:w=\"16838\" w:h=\"11906\" w:orient=\"landscape\"/>"),
+            "{xml}"
+        );
+        let landscape_at = xml.find("w:orient=\"landscape\"").expect("landscape");
+        let trailing_at = xml.rfind("<w:sectPr>").expect("trailing");
+        assert!(landscape_at < trailing_at, "{xml}");
+        assert!(
+            xml[trailing_at..].contains("w:w=\"11906\""),
+            "final section portrait: {xml}"
+        );
+    }
+
+    #[test]
+    fn landscape_figures_get_their_own_section() {
+        let doc = parse_document(
+            "Before.
+
+```mermaid {#d} page=landscape caption=\"Big\"
+graph TD
+```
+
+After.
+",
+        )
+        .unwrap();
+        let mut assets = BTreeMap::new();
+        assets.insert("d".to_string(), png_asset());
+        let bytes = render_docx(&doc, &assets).unwrap();
+        validate_docx(&bytes).unwrap();
+        let xml = unzip_document(&bytes);
+        // portrait | figure landscape | portrait(trailing)
+        assert_eq!(xml.matches("<w:sectPr>").count(), 3, "{xml}");
+        assert_eq!(xml.matches("w:orient=\"landscape\"").count(), 1, "{xml}");
+        let drawing_at = xml.find("w:drawing").expect("figure");
+        let landscape_at = xml.find("w:orient=\"landscape\"").expect("landscape");
+        let trailing_at = xml.rfind("<w:sectPr>").expect("trailing");
+        assert!(
+            drawing_at < landscape_at && landscape_at < trailing_at,
+            "the landscape section closes after the figure: {xml}"
+        );
+    }
 }
