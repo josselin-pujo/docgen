@@ -35,7 +35,7 @@ verified DOCX output in real Word and LibreOffice.
 
 ## Tasks
 
-- [ ] T1: docgen-core — annotations model
+- [x] T1: docgen-core — annotations model
   Add a per-block annotations payload (placement, caption, page
   orientation, new-page, keep) to the block model, separate from
   `Block.id` — id keeps its meaning as diff join key + diagram asset

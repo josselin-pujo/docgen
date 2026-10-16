@@ -99,6 +99,73 @@ pub struct Block {
     /// content hash for everything else). Never contains `/`.
     pub id: String,
     pub kind: BlockKind,
+    /// Authoring annotations (placement, caption, page geometry, breaks,
+    /// keeps) parsed from attribute syntax. Deliberately separate from `id`:
+    /// the id is the diff join key and diagram asset key and never carries
+    /// annotation values, and annotations are invisible to the structural
+    /// diff (D-001, D-008).
+    #[serde(default, skip_serializing_if = "Annotations::is_default")]
+    pub annotations: Annotations,
+}
+
+impl Block {
+    /// Whether keep-together applies to this block: figures and diagrams
+    /// keep by default, anything else only when `keep=true` is set (D-002).
+    pub fn keeps_together(&self) -> bool {
+        match self.annotations.keep {
+            Some(keep) => keep,
+            None => self.kind.lone_image().is_some() || self.kind.is_diagram(),
+        }
+    }
+}
+
+/// Per-block authoring annotations (D-001, D-009). Every field is optional:
+/// the zero value means "no directives", which renders exactly like a
+/// document without them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Annotations {
+    /// `place=inline|appendix` — media placement override (D-003).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<Placement>,
+    /// `caption="…"` — caption override; a lone image's alt text is the
+    /// default caption when this is unset (D-004). Diagrams only get a
+    /// caption through this attribute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+    /// `page=landscape|portrait` — real page-geometry change for this block;
+    /// on a heading it spans the section (D-005, D-010).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<Orientation>,
+    /// `new-page` — start this block on a fresh page (D-002).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub new_page: bool,
+    /// `keep=true|false` — keep-together override; figures keep by default
+    /// (D-002).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep: Option<bool>,
+}
+
+impl Annotations {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Where a media block renders (D-003).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Placement {
+    Inline,
+    Appendix,
+}
+
+/// Page orientation: always a real geometry change, never rotated content
+/// (D-005).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Orientation {
+    Landscape,
+    Portrait,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -132,6 +199,26 @@ pub enum BlockKind {
         blocks: Vec<Block>,
     },
     ThematicBreak,
+}
+
+impl BlockKind {
+    /// The single image of a paragraph that holds exactly one image and no
+    /// other content — the markdown shape of a figure (D-004). Returns the
+    /// URL and the alt text (the default caption).
+    pub fn lone_image(&self) -> Option<(&str, &[Inline])> {
+        match self {
+            BlockKind::Paragraph { inline } => match inline.as_slice() {
+                [Inline::Image { url, alt }] => Some((url.as_str(), alt.as_slice())),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// A fenced mermaid/excalidraw block — the other media shape (D-004).
+    pub fn is_diagram(&self) -> bool {
+        matches!(self, BlockKind::Diagram { .. })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,5 +295,113 @@ impl Inline {
                 Inline::SoftBreak | Inline::HardBreak => out.push(' '),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn annotations_default_is_empty_and_keeps_serialization_stable() {
+        let doc = Document {
+            frontmatter: Frontmatter::default(),
+            blocks: vec![Block {
+                id: "p-1".into(),
+                kind: BlockKind::Paragraph {
+                    inline: vec![Inline::Text("x".into())],
+                },
+                annotations: Annotations::default(),
+            }],
+        };
+        let json = serde_json::to_string(&doc).unwrap();
+        assert!(!json.contains("annotations"), "{json}");
+        let round: Document = serde_json::from_str(&json).unwrap();
+        assert_eq!(round, doc);
+    }
+
+    #[test]
+    fn annotations_survive_serialization_when_set() {
+        let block = Block {
+            id: "d".into(),
+            kind: BlockKind::Diagram {
+                format: DiagramFormat::Mermaid,
+                source: "graph TD".into(),
+            },
+            annotations: Annotations {
+                place: Some(Placement::Appendix),
+                page: Some(Orientation::Landscape),
+                new_page: true,
+                ..Default::default()
+            },
+        };
+        let json = serde_json::to_string(&block).unwrap();
+        assert!(json.contains("\"place\":\"appendix\""), "{json}");
+        assert!(json.contains("\"page\":\"landscape\""), "{json}");
+        assert!(json.contains("\"new_page\":true"), "{json}");
+        let round: Block = serde_json::from_str(&json).unwrap();
+        assert_eq!(round, block);
+    }
+
+    #[test]
+    fn keeps_together_defaults_on_for_media_only() {
+        let figure = Block {
+            id: "img".into(),
+            kind: BlockKind::Paragraph {
+                inline: vec![Inline::Image {
+                    url: "u.png".into(),
+                    alt: vec![Inline::Text("alt".into())],
+                }],
+            },
+            annotations: Annotations::default(),
+        };
+        assert!(figure.keeps_together());
+        let diagram = Block {
+            id: "d".into(),
+            kind: BlockKind::Diagram {
+                format: DiagramFormat::Mermaid,
+                source: String::new(),
+            },
+            annotations: Annotations::default(),
+        };
+        assert!(diagram.keeps_together());
+        let relaxed = Block {
+            annotations: Annotations {
+                keep: Some(false),
+                ..Default::default()
+            },
+            ..diagram.clone()
+        };
+        assert!(!relaxed.keeps_together());
+        let prose = Block {
+            id: "p".into(),
+            kind: BlockKind::Paragraph {
+                inline: vec![Inline::Text("plain".into())],
+            },
+            annotations: Annotations::default(),
+        };
+        assert!(!prose.keeps_together());
+    }
+
+    #[test]
+    fn lone_image_recognition() {
+        let lone = BlockKind::Paragraph {
+            inline: vec![Inline::Image {
+                url: "u.png".into(),
+                alt: vec![Inline::Text("cap".into())],
+            }],
+        };
+        assert_eq!(lone.lone_image().map(|(u, _)| u), Some("u.png"));
+        let mixed = BlockKind::Paragraph {
+            inline: vec![
+                Inline::Text("see ".into()),
+                Inline::Image {
+                    url: "u.png".into(),
+                    alt: vec![],
+                },
+            ],
+        };
+        assert_eq!(mixed.lone_image(), None);
+        assert!(!mixed.is_diagram());
     }
 }

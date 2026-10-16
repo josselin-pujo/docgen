@@ -12,7 +12,8 @@ use crate::Result;
 use crate::frontmatter;
 use crate::ids::{IdAllocator, fnv1a64, slug};
 use crate::model::{
-    Block, BlockKind, DiagramFormat, Document, Frontmatter, Inline, ListItem, TableRow,
+    Annotations, Block, BlockKind, DiagramFormat, Document, Frontmatter, Inline, ListItem,
+    TableRow,
 };
 
 pub fn parse_document(markdown: &str) -> Result<Document> {
@@ -60,7 +61,7 @@ impl ParseCtx {
                 Event::End(end) if Some(end) == stop => {
                     break;
                 }
-                Event::Rule => blocks.push(self.mk_block(BlockKind::ThematicBreak, None)),
+                Event::Rule => blocks.push(self.mk_block(BlockKind::ThematicBreak, None, Annotations::default())),
                 // Stray content outside any block (rare with commonmark).
                 Event::Text(t) if stop.is_none() && !t.trim().is_empty() => {
                     blocks.push(self.mk_block(
@@ -68,6 +69,7 @@ impl ParseCtx {
                             inline: vec![Inline::Text(t.into_string())],
                         },
                         None,
+                        Annotations::default(),
                     ));
                 }
                 _ => {}
@@ -81,7 +83,7 @@ impl ParseCtx {
         match tag {
             Tag::Paragraph => {
                 let inline = self.parse_inline(events, TagEnd::Paragraph);
-                Some(self.mk_block(BlockKind::Paragraph { inline }, None))
+                Some(self.mk_block(BlockKind::Paragraph { inline }, None, Annotations::default()))
             }
             Tag::Heading { level, id, .. } => {
                 let end = TagEnd::Heading(level);
@@ -97,11 +99,19 @@ impl ParseCtx {
                 let wanted = id
                     .map(|s| s.into_string())
                     .unwrap_or_else(|| slug(&Inline::plain_text(&inline)));
-                Some(self.mk_block(BlockKind::Heading { level, inline }, Some(wanted)))
+                Some(self.mk_block(
+                    BlockKind::Heading { level, inline },
+                    Some(wanted),
+                    Annotations::default(),
+                ))
             }
             Tag::BlockQuote(_) => {
                 let blocks = self.parse_blocks(events, Some(TagEnd::BlockQuote(None)));
-                Some(self.mk_block(BlockKind::BlockQuote { blocks }, None))
+                Some(self.mk_block(
+                    BlockKind::BlockQuote { blocks },
+                    None,
+                    Annotations::default(),
+                ))
             }
             Tag::CodeBlock(kind) => {
                 let mut code = String::new();
@@ -124,7 +134,7 @@ impl ParseCtx {
                     },
                     None => BlockKind::CodeBlock { language, code },
                 };
-                Some(self.mk_block(kind, explicit_id))
+                Some(self.mk_block(kind, explicit_id, Annotations::default()))
             }
             Tag::List(start) => {
                 let ordered = start.is_some();
@@ -156,6 +166,7 @@ impl ParseCtx {
                         items,
                     },
                     None,
+                    Annotations::default(),
                 ))
             }
             Tag::Table(_) => {
@@ -198,7 +209,11 @@ impl ParseCtx {
                         _ => {}
                     }
                 }
-                Some(self.mk_block(BlockKind::Table { rows }, None))
+                Some(self.mk_block(
+                    BlockKind::Table { rows },
+                    None,
+                    Annotations::default(),
+                ))
             }
             Tag::HtmlBlock => {
                 // Drop raw HTML blocks for now; roadmap: model them.
@@ -264,6 +279,7 @@ impl ParseCtx {
                             items: sublist_items,
                         },
                         None,
+                        Annotations::default(),
                     ));
                 }
                 Event::Start(tag @ (Tag::CodeBlock(_) | Tag::BlockQuote(_) | Tag::Table(_))) => {
@@ -351,7 +367,12 @@ impl ParseCtx {
         }
     }
 
-    fn mk_block(&mut self, kind: BlockKind, wanted_id: Option<String>) -> Block {
+    fn mk_block(
+        &mut self,
+        kind: BlockKind,
+        wanted_id: Option<String>,
+        annotations: Annotations,
+    ) -> Block {
         let id = match wanted_id {
             Some(w) => self.ids.allocate(w),
             None => {
@@ -360,7 +381,7 @@ impl ParseCtx {
                 self.ids.allocate(format!("{prefix}-{hash}"))
             }
         };
-        Block { id, kind }
+        Block { id, kind, annotations }
     }
 }
 

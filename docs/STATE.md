@@ -1,5 +1,5 @@
 # Workflow state
-- Phase: distilled
+- Phase: executing
 - Notes: docs/notes/large-diagrams-and-page-control.md
 - Plan: docs/plan.md
 - Decisions: docs/decisions.md (D-001 – D-012)
