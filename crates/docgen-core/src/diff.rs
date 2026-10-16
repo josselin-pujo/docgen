@@ -132,6 +132,11 @@ pub struct Run {
     pub strike: bool,
     pub code: bool,
     pub text: String,
+    /// Link target when the run came from inside a link (D-006 internal
+    /// links substrate); `None` for plain text. Stored as written —
+    /// `#fragment` targets are internal anchors.
+    #[doc(hidden)]
+    pub link: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -645,6 +650,7 @@ fn flatten_runs(inlines: &[Inline], flags: RunFlags) -> Vec<Run> {
                     strike: run.strike,
                     code: run.code,
                     text: chunk.to_string(),
+                    link: run.link.clone(),
                 });
             }
         }
@@ -658,6 +664,7 @@ fn flatten_runs(inlines: &[Inline], flags: RunFlags) -> Vec<Run> {
                     strike: flags.strike,
                     code: false,
                     text: t.clone(),
+                    link: None,
                 },
                 &mut out,
             ),
@@ -693,7 +700,15 @@ fn flatten_runs(inlines: &[Inline], flags: RunFlags) -> Vec<Run> {
                 },
                 &mut out,
             ),
-            Inline::Link { text, .. } => flatten_into(text, flags, &mut out),
+            Inline::Link { url, text } => {
+                // The runs keep their styling and additionally carry the
+                // link target (D-006).
+                let start = out.len();
+                flatten_into(text, flags, &mut out);
+                for run in &mut out[start..] {
+                    run.link = Some(url.clone());
+                }
+            }
             Inline::Image { alt, .. } => flatten_into(alt, flags, &mut out),
             Inline::SoftBreak => push(
                 Run {
@@ -974,17 +989,21 @@ mod tests {
         )
         .unwrap();
         let diff = diff_documents(&plain, &annotated);
-        assert!(diff.is_empty(), "annotations must be diff-invisible: {diff:?}");
+        assert!(
+            diff.is_empty(),
+            "annotations must be diff-invisible: {diff:?}"
+        );
         let diff = diff_documents(&annotated, &plain);
         assert!(diff.is_empty(), "symmetric: {diff:?}");
     }
 
     #[test]
     fn annotations_do_not_disturb_content_diffs() {
-        let old = parse_document("# R {#r}\n\nHello world.\n\n```mermaid {#d}\nA-->B\n```\n")
-            .unwrap();
-        let new_plain = parse_document("# R {#r}\n\nHello brave world.\n\n```mermaid {#d}\nA-->C\n```\n")
-            .unwrap();
+        let old =
+            parse_document("# R {#r}\n\nHello world.\n\n```mermaid {#d}\nA-->B\n```\n").unwrap();
+        let new_plain =
+            parse_document("# R {#r}\n\nHello brave world.\n\n```mermaid {#d}\nA-->C\n```\n")
+                .unwrap();
         let new_ann = parse_document(
             "# R {#r page=landscape}\n\nHello brave world.\n\n```mermaid {#d} place=appendix\nA-->C\n```\n",
         )
@@ -1000,7 +1019,9 @@ mod tests {
                     BlockChange::Added { at, .. } => format!("add@{at}"),
                     BlockChange::Removed { at, .. } => format!("rem@{at}"),
                     BlockChange::Moved { id, from, to } => format!("move {id} {from}->{to}"),
-                    BlockChange::Changed { id, at, content, .. } => {
+                    BlockChange::Changed {
+                        id, at, content, ..
+                    } => {
                         format!("chg {id}@{at} {content:?}")
                     }
                 })
@@ -1008,5 +1029,20 @@ mod tests {
         };
         assert_eq!(shape(&a), shape(&b));
         assert_eq!(a.summary(), b.summary());
+    }
+
+    #[test]
+    fn flatten_runs_carries_link_targets() {
+        let runs = flatten_runs_pub(&[Inline::Link {
+            url: "#x".into(),
+            text: vec![Inline::Text("a b".into())],
+        }]);
+        assert_eq!(runs.len(), 2);
+        assert!(
+            runs.iter().all(|r| r.link.as_deref() == Some("#x")),
+            "{runs:?}"
+        );
+        let plain = flatten_runs_pub(&[Inline::Text("plain".into())]);
+        assert!(plain.iter().all(|r| r.link.is_none()));
     }
 }

@@ -395,4 +395,41 @@ mod tests {
         let err = fill_template(&template, &doc, &BTreeMap::new());
         assert!(err.is_err());
     }
+
+    #[test]
+    fn internal_links_become_anchor_hyperlinks() {
+        let doc = parse_document(
+            "# Top {#top}
+
+See [the section](#top) and [nowhere](#missing-target).
+",
+        )
+        .unwrap();
+        let bytes = render_docx(&doc, &BTreeMap::new()).unwrap();
+        validate_docx(&bytes).unwrap();
+        let xml = unzip_document(&bytes);
+        // The target gets a bookmark; the link becomes an anchor hyperlink.
+        assert!(xml.contains("w:name=\"top\""), "{xml}");
+        assert!(xml.contains("<w:hyperlink w:anchor=\"top\">"), "{xml}");
+        assert!(xml.contains("<w:rStyle w:val=\"Hyperlink\"/>"), "{xml}");
+        // An unknown target stays plain text (no dead hyperlink).
+        assert_eq!(xml.matches("<w:hyperlink").count(), 1, "{xml}");
+    }
+
+    #[test]
+    fn figures_get_anchor_bookmarks() {
+        let doc = parse_document(
+            "```mermaid {#arch}
+flowchart TD
+A-->B
+```
+",
+        )
+        .unwrap();
+        let mut assets = BTreeMap::new();
+        assets.insert("arch".to_string(), png_asset());
+        let bytes = render_docx(&doc, &assets).unwrap();
+        let xml = unzip_document(&bytes);
+        assert!(xml.contains("w:name=\"fig_arch\""), "{xml}");
+    }
 }

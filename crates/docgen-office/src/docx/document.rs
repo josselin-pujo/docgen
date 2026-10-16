@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use docgen_core::assets::{AssetFormat, AssetMap};
 use docgen_core::diff::{ContentChange, DiffPlan, LineOp, Run, RunOp, Step, flatten_runs_pub};
+use docgen_core::media::{fig_anchor, resolve_anchor};
 use docgen_core::model::{Block, BlockKind, DiagramFormat, Document, Inline, ListItem, TableRow};
 use quick_xml::Reader;
 
@@ -175,15 +176,21 @@ pub(crate) struct Emitter<'a> {
     /// first paragraph.
     pending_comment: Option<usize>,
     in_block: bool,
+    /// True while emitting runs inside an anchor hyperlink (fresh renders
+    /// only): runs pick up the Hyperlink treatment.
+    in_hyperlink: bool,
     /// Direct formatting mode (foreign templates without our styles).
     direct: bool,
     props: DirectProps,
     /// Assets for this render: rendered diagrams (keyed by block id) and
     /// inline images (keyed by markdown URL).
     assets: &'a AssetMap,
-    /// Word bookmark names for TOC'd headings, keyed by block id (empty when
-    /// the document has no synthesized TOC).
-    toc_anchors: HashMap<String, String>,
+    /// Word bookmark names for linkable headings, keyed by block id: TOC'd
+    /// headings plus any heading an internal link targets.
+    heading_anchors: HashMap<String, String>,
+    /// Word bookmark names for media blocks, keyed by block id — the
+    /// targets of figure references and the figures index (D-004, D-006).
+    figure_anchors: HashMap<String, String>,
     next_bookmark_id: usize,
 }
 
@@ -199,10 +206,12 @@ impl<'a> Emitter<'a> {
             next_rev_id: 1,
             pending_comment: None,
             in_block: false,
+            in_hyperlink: false,
             direct: false,
             props: DirectProps::default(),
             assets,
-            toc_anchors: HashMap::new(),
+            heading_anchors: HashMap::new(),
+            figure_anchors: HashMap::new(),
             next_bookmark_id: 1,
         }
     }
@@ -218,10 +227,12 @@ impl<'a> Emitter<'a> {
             next_rev_id: 1,
             pending_comment: None,
             in_block: false,
+            in_hyperlink: false,
             direct: true,
             props: DirectProps::default(),
             assets,
-            toc_anchors: HashMap::new(),
+            heading_anchors: HashMap::new(),
+            figure_anchors: HashMap::new(),
             next_bookmark_id: 1,
         }
     }
@@ -421,6 +432,14 @@ impl<'a> Emitter<'a> {
         if let Some(color) = props.color {
             self.xml.empty("w:color", &[("w:val", color)]);
         }
+        if self.in_hyperlink {
+            if self.direct {
+                self.xml.empty("w:color", &[("w:val", "0563C1")]);
+                self.xml.empty("w:u", &[("w:val", "single")]);
+            } else {
+                self.xml.empty("w:rStyle", &[("w:val", "Hyperlink")]);
+            }
+        }
         self.xml.end("w:rPr");
         let text_elem = if mark == Mark::Delete {
             "w:delText"
@@ -433,6 +452,55 @@ impl<'a> Emitter<'a> {
         self.xml.end("w:r");
     }
 
+    /// Writes flattened runs, coalescing consecutive same-target runs into
+    /// a single anchor hyperlink for internal links (fresh renders only;
+    /// revision-marked runs and external links keep the plain treatment).
+    fn write_run_group(&mut self, runs: &[Run], mark: Mark) {
+        let mut i = 0;
+        while i < runs.len() {
+            let link = runs[i].link.clone();
+            let group = if link.is_some() {
+                runs[i..].iter().take_while(|r| r.link == link).count()
+            } else {
+                1
+            };
+            let anchor = if mark == Mark::None {
+                link.as_deref()
+                    .filter(|l| l.starts_with('#'))
+                    .and_then(|l| self.anchor_target(&l[1..]))
+            } else {
+                None
+            };
+            match anchor {
+                Some(a) => {
+                    self.xml.start("w:hyperlink", &[("w:anchor", &a)]);
+                    self.in_hyperlink = true;
+                    for r in &runs[i..i + group] {
+                        self.write_run(r, mark);
+                    }
+                    self.in_hyperlink = false;
+                    self.xml.end("w:hyperlink");
+                }
+                None => {
+                    for r in &runs[i..i + group] {
+                        self.write_run(r, mark);
+                    }
+                }
+            }
+            i += group;
+        }
+    }
+
+    /// The Word bookmark for a resolved link target (figure anchor or
+    /// heading id), if one exists.
+    fn anchor_target(&self, target: &str) -> Option<String> {
+        let resolved = resolve_anchor(target);
+        self.figure_anchors
+            .get(&resolved)
+            .or_else(|| self.heading_anchors.get(&resolved))
+            .cloned()
+    }
+
     fn write_runs(&mut self, inline: &[Inline], mark: Mark) {
         let close = self.open_mark(mark);
         // Inline images embed as drawings between text runs (fresh renders
@@ -442,9 +510,8 @@ impl<'a> Emitter<'a> {
             match item {
                 Inline::Image { url, alt } if mark == Mark::None => {
                     if !pending.is_empty() {
-                        for run in &flatten_runs_pub(&pending) {
-                            self.write_run(run, mark);
-                        }
+                        let runs = flatten_runs_pub(&pending);
+                        self.write_run_group(&runs, mark);
                         pending.clear();
                     }
                     self.write_image(url, alt);
@@ -453,9 +520,8 @@ impl<'a> Emitter<'a> {
             }
         }
         if !pending.is_empty() {
-            for run in &flatten_runs_pub(&pending) {
-                self.write_run(run, mark);
-            }
+            let runs = flatten_runs_pub(&pending);
+            self.write_run_group(&runs, mark);
         }
         if let Some(el) = close {
             self.xml.end(el);
@@ -576,7 +642,7 @@ impl<'a> Emitter<'a> {
         match &block.kind {
             BlockKind::Heading { level, inline } => {
                 let style = format!("Heading{}", (*level).clamp(1, 6));
-                match self.toc_anchors.get(&block.id).cloned() {
+                match self.heading_anchors.get(&block.id).cloned() {
                     Some(anchor) => {
                         // TOC'd heading: wrap it in the bookmark its Contents
                         // entry links to.
@@ -684,7 +750,20 @@ impl<'a> Emitter<'a> {
 
         self.paragraph_open(None, mark, true);
         let close = self.open_mark(mark);
-        self.write_drawing(rid, docpr, cx, cy, &format!("Diagram {docpr}"), "");
+        let bookmark = self.figure_anchors.get(block_id).cloned();
+        if let Some(name) = &bookmark {
+            let id = self.next_bookmark_id;
+            self.next_bookmark_id += 1;
+            self.xml.empty(
+                "w:bookmarkStart",
+                &[("w:id", &id.to_string()), ("w:name", name)],
+            );
+            self.write_drawing(rid, docpr, cx, cy, &format!("Diagram {docpr}"), "");
+            self.xml
+                .empty("w:bookmarkEnd", &[("w:id", &id.to_string())]);
+        } else {
+            self.write_drawing(rid, docpr, cx, cy, &format!("Diagram {docpr}"), "");
+        }
         if let Some(el) = close {
             self.xml.end(el);
         }
@@ -1244,6 +1323,83 @@ fn bookmark_name(id: &str, used: &mut HashSet<String>) -> String {
     name
 }
 
+/// Heading ids targeted by internal links in the body, in document order —
+/// each gets a bookmark so authored `[text](#id)` links work (D-006).
+fn referenced_heading_targets(doc: &Document) -> Vec<String> {
+    let headings: HashSet<&str> = doc
+        .blocks
+        .iter()
+        .filter_map(|b| match &b.kind {
+            BlockKind::Heading { .. } => Some(b.id.as_str()),
+            _ => None,
+        })
+        .collect();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out = Vec::new();
+    let mut push_target = |fragment: &str, out: &mut Vec<String>, seen: &mut HashSet<String>| {
+        let resolved = resolve_anchor(fragment);
+        if headings.contains(resolved.as_str()) && seen.insert(resolved.clone()) {
+            out.push(resolved);
+        }
+    };
+    for block in &doc.blocks {
+        match &block.kind {
+            BlockKind::Heading { inline, .. } | BlockKind::Paragraph { inline } => {
+                collect_link_targets(inline, &mut push_target, &mut out, &mut seen);
+            }
+            BlockKind::List { items, .. } => {
+                for item in items {
+                    collect_link_targets(&item.content, &mut push_target, &mut out, &mut seen);
+                    for child in &item.children {
+                        if let BlockKind::Paragraph { inline } = &child.kind {
+                            collect_link_targets(inline, &mut push_target, &mut out, &mut seen);
+                        }
+                    }
+                }
+            }
+            BlockKind::Table { rows } => {
+                for row in rows {
+                    for cell in &row.cells {
+                        collect_link_targets(cell, &mut push_target, &mut out, &mut seen);
+                    }
+                }
+            }
+            BlockKind::BlockQuote { blocks } => {
+                for child in blocks {
+                    if let BlockKind::Paragraph { inline } = &child.kind {
+                        collect_link_targets(inline, &mut push_target, &mut out, &mut seen);
+                    }
+                }
+            }
+            BlockKind::CodeBlock { .. } | BlockKind::Diagram { .. } | BlockKind::ThematicBreak => {}
+        }
+    }
+    out
+}
+
+fn collect_link_targets(
+    inline: &[Inline],
+    push_target: &mut impl FnMut(&str, &mut Vec<String>, &mut HashSet<String>),
+    out: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+) {
+    for item in inline {
+        match item {
+            Inline::Link { url, text } => {
+                if let Some(fragment) = url.strip_prefix('#') {
+                    push_target(fragment, out, seen);
+                }
+                collect_link_targets(text, push_target, out, seen);
+            }
+            Inline::Strong(inner) | Inline::Emphasis(inner) | Inline::Strikethrough(inner) => {
+                collect_link_targets(inner, push_target, out, seen);
+            }
+            Inline::Image { alt, .. } => collect_link_targets(alt, push_target, out, seen),
+            Inline::Text(_) | Inline::Code(_) | Inline::SoftBreak | Inline::HardBreak => {}
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Package assembly
 
@@ -1260,8 +1416,31 @@ pub(crate) fn render(
         None
     };
     let mut emitter = Emitter::new(revision, assets);
+    let mut used_names: HashSet<String> = HashSet::new();
     if let Some(plan) = &toc {
-        emitter.toc_anchors = plan.anchors.clone();
+        for name in plan.anchors.values() {
+            used_names.insert(name.clone());
+        }
+        emitter.heading_anchors = plan.anchors.clone();
+    }
+    // Every media block gets a figure bookmark (references, the index and
+    // authored `#fig:…` links all target it).
+    let mut figure_anchors = HashMap::new();
+    for block in &doc.blocks {
+        if block.kind.lone_image().is_some() || block.kind.is_diagram() {
+            let name = bookmark_name(&fig_anchor(&block.id), &mut used_names);
+            figure_anchors.insert(block.id.clone(), name);
+        }
+    }
+    emitter.figure_anchors = figure_anchors;
+    // Headings targeted by internal links get bookmarks too (TOC'd headings
+    // already have theirs).
+    for target in referenced_heading_targets(doc) {
+        if let std::collections::hash_map::Entry::Vacant(e) = emitter.heading_anchors.entry(target)
+        {
+            let name = bookmark_name(e.key(), &mut used_names);
+            e.insert(name);
+        }
     }
     emitter.write_cover(&doc.frontmatter);
     if let Some(plan) = &toc {
