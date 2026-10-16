@@ -60,7 +60,9 @@ pub fn parse(yaml: &str) -> Result<Frontmatter> {
         && !v.is_null()
     {
         serde_json::from_value::<crate::model::MediaConfig>(v.clone()).map_err(|e| {
-            Error::Frontmatter(format!("invalid `media:` map (expected placement: inline|appendix, index: bool): {e}"))
+            Error::Frontmatter(format!(
+                "invalid `media:` map (expected placement: inline|appendix, index: bool): {e}"
+            ))
         })?;
     }
     Ok(fm)

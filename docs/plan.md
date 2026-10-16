@@ -91,7 +91,7 @@ verified DOCX output in real Word and LibreOffice.
   - done when: an oversized tall diagram renders fully inside the
     page; a deliberately huge one triggers the warning; goldens
     updated intentionally.
-- [ ] T9: typst — back matter
+- [x] T9: typst — back matter
   Media appendix (captioned figures, orientation inherited from the
   document per D-010) and a figures index with page numbers when
   `media.index: true`.
@@ -120,17 +120,17 @@ verified DOCX output in real Word and LibreOffice.
   - done when: a mixed-orientation DOCX opens without repair prompts
     in Word and LibreOffice (user verifies); landscape pages are real
     geometry; goldens updated intentionally.
-- [ ] T13: docx — back matter
+- [x] T13: docx — back matter
   Media appendix + links-only figures index (no page numbers per
   D-006).
   - done when: smoke DOCX has the appendix with working anchor links
     (user verifies rendering); goldens updated intentionally.
-- [ ] T14: pptx — warn on unsupported directives
+- [x] T14: pptx — warn on unsupported directives
   Detect placement/orientation/index usage and emit a warning; zero
   output change.
   - done when: the warning appears on a CLI run exercising the
     directives; pptx golden hashes are byte-identical (no update).
-- [ ] T15: workspace verification + samples
+- [x] T15: workspace verification + samples
   `cargo fmt --all`; `cargo clippy --workspace --all-targets --
   -D warnings`; `cargo test --workspace`; generate sample PDF + DOCX
   outputs into `target/` exercising every feature; list what needs
