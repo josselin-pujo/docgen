@@ -47,6 +47,16 @@ pub struct MediaPlan {
     pub figures: Vec<FigurePlan>,
 }
 
+impl Default for MediaPlan {
+    fn default() -> Self {
+        Self {
+            default_placement: Placement::Inline,
+            index_requested: false,
+            figures: Vec::new(),
+        }
+    }
+}
+
 impl MediaPlan {
     pub fn resolve(doc: &Document) -> Self {
         Self::resolve_with(doc, &doc.frontmatter)

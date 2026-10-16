@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use docgen_core::assets::{AssetFormat, AssetMap};
 use docgen_core::diff::{ContentChange, DiffPlan, LineOp, Run, RunOp, Step, flatten_runs_pub};
-use docgen_core::media::{fig_anchor, resolve_anchor};
+use docgen_core::media::{MediaPlan, fig_anchor, resolve_anchor};
 use docgen_core::model::{Block, BlockKind, DiagramFormat, Document, Inline, ListItem, TableRow};
 use quick_xml::Reader;
 
@@ -191,6 +191,14 @@ pub(crate) struct Emitter<'a> {
     /// Word bookmark names for media blocks, keyed by block id — the
     /// targets of figure references and the figures index (D-004, D-006).
     figure_anchors: HashMap<String, String>,
+    /// Figure numbering/placement plan, resolved once per render.
+    plan: MediaPlan,
+    /// Consumed by the next `paragraph_open`: keep the paragraph with the
+    /// following one (figures keep their caption, D-002).
+    pending_keep_next: bool,
+    /// Consumed by the next `paragraph_open`: start it on a fresh page
+    /// (`new-page`, D-002).
+    pending_page_break: bool,
     next_bookmark_id: usize,
 }
 
@@ -212,6 +220,9 @@ impl<'a> Emitter<'a> {
             assets,
             heading_anchors: HashMap::new(),
             figure_anchors: HashMap::new(),
+            plan: MediaPlan::default(),
+            pending_keep_next: false,
+            pending_page_break: false,
             next_bookmark_id: 1,
         }
     }
@@ -233,6 +244,9 @@ impl<'a> Emitter<'a> {
             assets,
             heading_anchors: HashMap::new(),
             figure_anchors: HashMap::new(),
+            plan: MediaPlan::default(),
+            pending_keep_next: false,
+            pending_page_break: false,
             next_bookmark_id: 1,
         }
     }
@@ -344,6 +358,18 @@ impl<'a> Emitter<'a> {
         self.xml.start("w:p", &[]);
         self.xml.start("w:pPr", &[]);
         self.props = style.map(direct_props_for).unwrap_or_default();
+        if let Some(style) = style
+            && !self.direct
+        {
+            self.xml.empty("w:pStyle", &[("w:val", style)]);
+        }
+        // Schema order: pStyle, keepNext, keepLines, pageBreakBefore.
+        if std::mem::take(&mut self.pending_keep_next) {
+            self.xml.empty("w:keepNext", &[]);
+        }
+        if std::mem::take(&mut self.pending_page_break) {
+            self.xml.empty("w:pageBreakBefore", &[]);
+        }
         if let Some(style) = style {
             if self.direct {
                 // Direct formatting instead of a style reference.
@@ -382,11 +408,8 @@ impl<'a> Emitter<'a> {
                     }
                     _ => {}
                 }
-            } else {
-                self.xml.empty("w:pStyle", &[("w:val", style)]);
-                if centered {
-                    self.xml.empty("w:jc", &[("w:val", "center")]);
-                }
+            } else if centered {
+                self.xml.empty("w:jc", &[("w:val", "center")]);
             }
         } else if centered {
             self.xml.empty("w:jc", &[("w:val", "center")]);
@@ -639,6 +662,7 @@ impl<'a> Emitter<'a> {
 
     pub(crate) fn write_block(&mut self, block: &Block, mark: Mark, assets: &AssetMap) {
         self.in_block = true;
+        self.pending_page_break = mark == Mark::None && block.annotations.new_page;
         match &block.kind {
             BlockKind::Heading { level, inline } => {
                 let style = format!("Heading{}", (*level).clamp(1, 6));
@@ -659,13 +683,30 @@ impl<'a> Emitter<'a> {
                 }
             }
             BlockKind::Paragraph { inline } => {
-                self.write_paragraph(inline, None, mark);
+                // A captioned lone-image paragraph is a figure: centered
+                // image, bookmark and "Figure N: caption" (D-004). Revision
+                // output keeps the text-level treatment.
+                if mark == Mark::None
+                    && block.kind.lone_image().is_some()
+                    && self.plan.figure(&block.id).and_then(|f| f.number).is_some()
+                {
+                    let (url, alt) = block.kind.lone_image().unwrap();
+                    self.write_figure_image(url, alt, block);
+                    let fp = self.plan.figure(&block.id).unwrap();
+                    self.write_caption(&format!(
+                        "{}: {}",
+                        fp.label().unwrap_or_default(),
+                        fp.caption.clone().unwrap_or_default()
+                    ));
+                } else {
+                    self.write_paragraph(inline, None, mark);
+                }
             }
             BlockKind::CodeBlock { code, .. } => {
                 self.write_code_block(code, mark);
             }
             BlockKind::Diagram { .. } => {
-                self.write_diagram(&block.id, mark, assets);
+                self.write_diagram(block, mark, assets);
             }
             BlockKind::List { ordered, items, .. } => {
                 self.write_list(*ordered, items, 0, mark);
@@ -735,22 +776,27 @@ impl<'a> Emitter<'a> {
         self.paragraph_close();
     }
 
-    fn write_diagram(&mut self, block_id: &str, mark: Mark, assets: &AssetMap) {
-        let Some(asset) = assets.get(block_id) else {
+    fn write_diagram(&mut self, block: &Block, mark: Mark, assets: &AssetMap) {
+        let Some(asset) = assets.get(&block.id) else {
             self.write_paragraph(
-                &[Inline::Text(format!("diagram not rendered ({block_id})"))],
+                &[Inline::Text(format!("diagram not rendered ({})", block.id))],
                 Some("Quote"),
                 Mark::None,
             );
             return;
         };
+        let fig_number = self.plan.figure(&block.id).and_then(|f| f.number);
+        let fig_caption = self.plan.figure(&block.id).and_then(|f| f.caption.clone());
+        if mark == Mark::None && fig_number.is_some() && block.keeps_together() {
+            self.pending_keep_next = true;
+        }
         let (rid, cx, cy) = self.media.register(&asset.bytes, asset.format);
         let docpr = self.media.next_docpr;
         self.media.next_docpr += 1;
 
         self.paragraph_open(None, mark, true);
         let close = self.open_mark(mark);
-        let bookmark = self.figure_anchors.get(block_id).cloned();
+        let bookmark = self.figure_anchors.get(&block.id).cloned();
         if let Some(name) = &bookmark {
             let id = self.next_bookmark_id;
             self.next_bookmark_id += 1;
@@ -766,6 +812,78 @@ impl<'a> Emitter<'a> {
         }
         if let Some(el) = close {
             self.xml.end(el);
+        }
+        self.paragraph_close();
+        if mark == Mark::None
+            && let Some(caption) = fig_caption
+        {
+            let label = match fig_number {
+                Some(n) => format!("Figure {n}: {caption}"),
+                None => caption.clone(),
+            };
+            self.write_caption(&label);
+        }
+    }
+
+    /// The caption line under a figure ("Figure N: caption"), Caption style.
+    fn write_caption(&mut self, text: &str) {
+        self.paragraph_open(Some("Caption"), Mark::None, false);
+        self.write_runs(&[Inline::Text(text.to_string())], Mark::None);
+        self.paragraph_close();
+    }
+
+    /// A captioned lone-image paragraph as a figure: centered embedded
+    /// image with its bookmark, then the caller writes the caption.
+    fn write_figure_image(&mut self, url: &str, alt: &[Inline], block: &Block) {
+        let embeddable = self
+            .assets
+            .get(url)
+            .filter(|asset| {
+                matches!(
+                    asset.format,
+                    AssetFormat::Png | AssetFormat::Jpeg | AssetFormat::Gif
+                )
+            })
+            .cloned();
+        let Some(asset) = embeddable else {
+            // No bytes: the visible marker paragraph (as inline images).
+            let alt_text = Inline::plain_text(alt);
+            let label = if alt_text.trim().is_empty() {
+                url.to_string()
+            } else {
+                alt_text
+            };
+            self.write_paragraph(
+                &[Inline::Text(format!("[image not embedded: {label}]"))],
+                None,
+                Mark::None,
+            );
+            return;
+        };
+        if block.keeps_together() {
+            self.pending_keep_next = true;
+        }
+        let (rid, cx, cy) = self.media.register(&asset.bytes, asset.format);
+        let docpr = self.media.next_docpr;
+        self.media.next_docpr += 1;
+        let alt_text = Inline::plain_text(alt);
+        self.paragraph_open(None, Mark::None, true);
+        let bookmark = self.figure_anchors.get(&block.id).cloned();
+        let bm_id = bookmark.is_some().then(|| {
+            let id = self.next_bookmark_id;
+            self.next_bookmark_id += 1;
+            id
+        });
+        if let (Some(name), Some(id)) = (&bookmark, bm_id) {
+            self.xml.empty(
+                "w:bookmarkStart",
+                &[("w:id", &id.to_string()), ("w:name", name)],
+            );
+        }
+        self.write_drawing(rid, docpr, cx, cy, &format!("Image {docpr}"), &alt_text);
+        if let (Some(_name), Some(id)) = (&bookmark, bm_id) {
+            self.xml
+                .empty("w:bookmarkEnd", &[("w:id", &id.to_string())]);
         }
         self.paragraph_close();
     }
@@ -1168,7 +1286,7 @@ impl<'a> Emitter<'a> {
                 self.add_comment(&comment);
                 self.add_comment(&comment);
                 if old_assets.get(&old.id).is_some() {
-                    self.write_diagram(&old.id, Mark::Delete, old_assets);
+                    self.write_diagram(old, Mark::Delete, old_assets);
                 } else if let BlockKind::Diagram { source, .. } = &old.kind {
                     self.write_paragraph(
                         &[Inline::Text(format!(
@@ -1180,7 +1298,7 @@ impl<'a> Emitter<'a> {
                     );
                 }
                 if new_assets.get(&new.id).is_some() {
-                    self.write_diagram(&new.id, Mark::Insert, new_assets);
+                    self.write_diagram(new, Mark::Insert, new_assets);
                 } else if let BlockKind::Diagram { source, .. } = &new.kind {
                     self.write_paragraph(
                         &[Inline::Text(format!(
@@ -1416,6 +1534,7 @@ pub(crate) fn render(
         None
     };
     let mut emitter = Emitter::new(revision, assets);
+    emitter.plan = MediaPlan::resolve(doc);
     let mut used_names: HashSet<String> = HashSet::new();
     if let Some(plan) = &toc {
         for name in plan.anchors.values() {

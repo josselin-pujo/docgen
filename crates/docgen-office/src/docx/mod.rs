@@ -246,7 +246,8 @@ mod tests {
         let doc = parse_document("![logo](img/logo.png)\n").unwrap();
         let bytes = render_docx(&doc, &BTreeMap::new()).unwrap();
         let xml = unzip_document(&bytes);
-        assert!(xml.contains("image not embedded"), "marker visible");
+        // Runs are word-split; the marker and the caption survive as text.
+        assert!(xml.contains("embedded: "), "marker visible: {xml}");
         assert!(!xml.contains("w:drawing"), "no drawing without bytes");
     }
 
@@ -431,5 +432,81 @@ A-->B
         let bytes = render_docx(&doc, &assets).unwrap();
         let xml = unzip_document(&bytes);
         assert!(xml.contains("w:name=\"fig_arch\""), "{xml}");
+    }
+
+    #[test]
+    fn captioned_diagrams_carry_captions_and_keeps() {
+        let doc = parse_document(
+            "```mermaid {#arch} caption=\"System\"
+flowchart TD
+A-->B
+```
+",
+        )
+        .unwrap();
+        let mut assets = BTreeMap::new();
+        assets.insert("arch".to_string(), png_asset());
+        let bytes = render_docx(&doc, &assets).unwrap();
+        let xml = unzip_document(&bytes);
+        assert!(xml.contains("w:pStyle w:val=\"Caption\""), "{xml}");
+        assert!(xml.contains("Figure "), "numbered caption: {xml}");
+        assert!(xml.contains("System"), "caption text: {xml}");
+        assert!(
+            xml.contains("<w:keepNext/>"),
+            "image keeps its caption: {xml}"
+        );
+    }
+
+    #[test]
+    fn captioned_lone_images_are_figures_with_bookmarks() {
+        let doc = parse_document(
+            "![The hero](h.png){#fig:hero}
+",
+        )
+        .unwrap();
+        let mut assets = BTreeMap::new();
+        assets.insert("h.png".to_string(), png_asset());
+        let bytes = render_docx(&doc, &assets).unwrap();
+        let xml = unzip_document(&bytes);
+        assert!(xml.contains("w:name=\"fig_hero\""), "{xml}");
+        assert!(xml.contains("w:jc w:val=\"center\""), "centered: {xml}");
+        assert!(xml.contains("w:pStyle w:val=\"Caption\""), "{xml}");
+        assert!(xml.contains("The hero"), "alt text is the caption: {xml}");
+    }
+
+    #[test]
+    fn new_page_breaks_before_the_block() {
+        let doc = parse_document(
+            "Intro.
+
+# A {new-page}
+
+Text.
+",
+        )
+        .unwrap();
+        let bytes = render_docx(&doc, &BTreeMap::new()).unwrap();
+        let xml = unzip_document(&bytes);
+        assert!(
+            xml.contains("w:pStyle w:val=\"Heading1\"/><w:pageBreakBefore/>"),
+            "{xml}"
+        );
+    }
+
+    #[test]
+    fn keep_false_relaxes_the_figure() {
+        let doc = parse_document(
+            "```mermaid {#d} caption=\"X\" keep=false
+graph TD
+```
+",
+        )
+        .unwrap();
+        let mut assets = BTreeMap::new();
+        assets.insert("d".to_string(), png_asset());
+        let bytes = render_docx(&doc, &assets).unwrap();
+        let xml = unzip_document(&bytes);
+        assert!(xml.contains("Caption"), "caption still present: {xml}");
+        assert!(!xml.contains("<w:keepNext/>"), "{xml}");
     }
 }
