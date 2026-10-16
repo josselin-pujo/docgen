@@ -78,7 +78,7 @@ verified DOCX output in real Word and LibreOffice.
   - done when: a smoke PDF (via `docgen-cli`) shows working internal
     links and captioned numbered figures; golden hashes updated
     intentionally (`UPDATE_GOLDEN=1`) with the output change stated.
-- [ ] T7: typst — page controls + orientation
+- [x] T7: typst — page controls + orientation
   `new-page` → `#pagebreak()`; keeps → non-breakable blocks; `page=` →
   scoped `#set page` geometry change, section spans per D-010 (default
   template only per D-006).

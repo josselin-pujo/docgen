@@ -25,7 +25,7 @@ use std::collections::HashSet;
 
 use docgen_core::assets::{AssetFormat, AssetMap};
 use docgen_core::media::{MediaPlan, fig_anchor, resolve_anchor};
-use docgen_core::model::{Block, BlockKind, Document, Inline, ListItem};
+use docgen_core::model::{Block, BlockKind, Document, Inline, ListItem, Orientation};
 
 /// Names of the virtual files the template can address.
 pub const BODY_PATH: &str = "docgen-body.typ";
@@ -94,7 +94,30 @@ pub fn emit(doc: &Document, assets: &AssetMap, template: Option<&str>) -> Emitte
     };
 
     let mut body = String::with_capacity(4096);
-    for block in &doc.blocks {
+    // Page controls ride the default template only — custom templates own
+    // their page setup (D-006).
+    let page_ctl = template.is_none();
+    let spans = page_spans(doc);
+    let mut orientation = Orientation::Portrait;
+    for (i, block) in doc.blocks.iter().enumerate() {
+        if page_ctl {
+            let want = spans[i];
+            // A figure's `page=` always forces its own page (D-010 (3));
+            // when the geometry changes, typst's page set rule breaks
+            // anyway, so an explicit break is only needed within one
+            // orientation.
+            let forced = block.annotations.new_page
+                || (block.annotations.page.is_some()
+                    && (block.kind.lone_image().is_some() || block.kind.is_diagram()));
+            if forced && want == orientation {
+                body.push_str("#pagebreak()\n\n");
+            }
+            if want != orientation {
+                let flipped = matches!(want, Orientation::Landscape);
+                body.push_str(&format!("#set page(flipped: {flipped})\n\n"));
+                orientation = want;
+            }
+        }
         em.block(block, &mut body);
     }
 
@@ -467,6 +490,43 @@ fn image_file_name(url: &str, format: AssetFormat, used: &mut HashSet<String>) -
     name
 }
 
+/// Effective page orientation for every top-level block (D-010): a
+/// heading's `page=` spans its section, ending at the next heading of level
+/// ≤ its own; a figure's `page=` applies to the figure alone and wins over
+/// an enclosing heading span. Blocks outside any span are portrait (the
+/// document default).
+fn page_spans(doc: &Document) -> Vec<Orientation> {
+    let mut spans = vec![Orientation::Portrait; doc.blocks.len()];
+    for (i, block) in doc.blocks.iter().enumerate() {
+        let BlockKind::Heading { level, .. } = &block.kind else {
+            continue;
+        };
+        let Some(o) = block.annotations.page else {
+            continue;
+        };
+        spans[i] = o;
+        let mut j = i + 1;
+        while j < doc.blocks.len() {
+            if let BlockKind::Heading { level: next, .. } = &doc.blocks[j].kind
+                && *next <= *level
+            {
+                break;
+            }
+            spans[j] = o;
+            j += 1;
+        }
+    }
+    for (i, block) in doc.blocks.iter().enumerate() {
+        let Some(o) = block.annotations.page else {
+            continue;
+        };
+        if block.kind.lone_image().is_some() || block.kind.is_diagram() {
+            spans[i] = o;
+        }
+    }
+    spans
+}
+
 /// Typst label names allow alphanumerics plus `_-.` and `:`; anything else
 /// becomes `_` so authored ids can never break label syntax.
 fn typst_label(id: &str) -> String {
@@ -669,12 +729,11 @@ mod tests {
         RenderedAsset {
             format: AssetFormat::Png,
             bytes: vec![
-                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49,
-                0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06,
-                0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0B, 0x49, 0x44,
-                0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8, 0x0F, 0x04, 0x00, 0x09, 0xFB, 0x03, 0xFD,
-                0xFB, 0x5E, 0x6B, 0x2B, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
-                0x42, 0x60, 0x82,
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+                0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+                0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0B, 0x49, 0x44, 0x41, 0x54, 0x78,
+                0x9C, 0x63, 0xF8, 0x0F, 0x04, 0x00, 0x09, 0xFB, 0x03, 0xFD, 0xFB, 0x5E, 0x6B, 0x2B,
+                0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
             ],
         }
     }
@@ -803,5 +862,119 @@ mod tests {
             .unwrap();
         assert!(pdf.starts_with(b"%PDF"));
         assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    /// Landscape sections produce genuinely flipped page geometry (D-005,
+    /// D-010); content is never rotated.
+    #[test]
+    fn landscape_sections_flip_page_geometry() {
+        let doc = docgen_core::parse_document(
+            "# Portrait {#p}
+
+Text.
+
+# Wide {#w page=landscape}
+
+Wide text.
+
+## Deep {#d}
+
+Still wide.
+
+# Back {#b}
+
+Portrait again.
+",
+        )
+        .unwrap();
+        let (paged, warnings) = crate::TypstRenderer::new_embedded()
+            .compile(&doc, &Default::default())
+            .unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let sizes: Vec<String> = paged
+            .pages()
+            .iter()
+            .map(|p| format!("{:?}", p.frame.size()))
+            .collect();
+        assert!(
+            sizes
+                .iter()
+                .any(|s| s.contains("841.8897637795276pt, 595.2755905511812pt")),
+            "expected a landscape page: {sizes:?}"
+        );
+        // The section ends: the last page is portrait again.
+        assert!(
+            sizes
+                .last()
+                .unwrap()
+                .contains("595.2755905511812pt, 841.8897637795276pt"),
+            "expected portrait after the section: {sizes:?}"
+        );
+    }
+
+    #[test]
+    fn new_page_emits_pagebreak() {
+        let doc = docgen_core::parse_document(
+            "A.
+
+## C {new-page}
+
+D.
+",
+        )
+        .unwrap();
+        let out = emit(&doc, &Default::default(), None);
+        assert!(body_of(&out).contains("#pagebreak()"), "{}", body_of(&out));
+    }
+
+    #[test]
+    fn custom_templates_get_no_page_controls() {
+        let doc = docgen_core::parse_document(
+            "# H {page=landscape new-page}
+
+T.
+",
+        )
+        .unwrap();
+        let out = emit(
+            &doc,
+            &Default::default(),
+            Some(
+                "#include \"docgen-body.typ\"
+",
+            ),
+        );
+        let body = body_of(&out);
+        assert!(!body.contains("pagebreak"), "{body}");
+        assert!(!body.contains("flipped"), "{body}");
+    }
+
+    #[test]
+    fn heading_spans_cover_their_section_only() {
+        let doc = docgen_core::parse_document(
+            "# A {page=landscape}
+
+a.
+
+## A1
+
+a1.
+
+# B
+
+b.
+",
+        )
+        .unwrap();
+        let out = emit(&doc, &Default::default(), None);
+        let body = body_of(&out);
+        let flipped_on = body.matches("#set page(flipped: true)").count();
+        let flipped_off = body.matches("#set page(flipped: false)").count();
+        assert_eq!((flipped_on, flipped_off), (1, 1), "{body}");
+        // The landscape set page comes before A's content and the flip back
+        // before B's heading line.
+        let b_pos = body.find("= B <b>").unwrap();
+        let flip_back = body.find("#set page(flipped: false)").unwrap();
+        assert!(flip_back < b_pos, "{body}");
     }
 }
