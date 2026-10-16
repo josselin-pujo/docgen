@@ -14,6 +14,7 @@ pub mod diff;
 mod error;
 pub mod frontmatter;
 pub mod ids;
+pub mod media;
 pub mod model;
 pub mod parse;
 
