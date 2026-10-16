@@ -71,7 +71,7 @@ verified DOCX output in real Word and LibreOffice.
   structural diff.
   - done when: diff output is byte-identical with and without
     annotations on the same content (D-008).
-- [ ] T6: typst — figures + internal links
+- [x] T6: typst — figures + internal links
   Emit figure captions/numbers, labels on figures, and fragment links
   for appendix-mode inline references and the figures index (body
   internal links are new — typst emits no labels today).

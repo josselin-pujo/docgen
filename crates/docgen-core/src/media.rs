@@ -145,6 +145,16 @@ pub fn fig_anchor(block_id: &str) -> String {
     format!("fig-{block_id}")
 }
 
+/// Normalizes a markdown fragment target: `#fig:x` (the figure-id
+/// convention) resolves to the figure anchor `fig-x`; anything else is the
+/// anchor as written (block id).
+pub fn resolve_anchor(fragment: &str) -> String {
+    match fragment.strip_prefix("fig:") {
+        Some(rest) => fig_anchor(rest),
+        None => fragment.to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

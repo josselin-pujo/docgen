@@ -109,11 +109,17 @@ impl TypstRenderer {
         let emitted = emit::emit(doc, assets, self.template.as_deref());
         let world = MemWorld::new(self, emitted.main, emitted.sources, emitted.files);
 
-        let Warned { output, warnings } = typst::compile::<PagedDocument>(&world);
-        let warnings = warnings
-            .iter()
-            .map(|w| format!("typst warning: {}", w.message))
-            .collect();
+        let Warned {
+            output,
+            warnings: typst_warnings,
+        } = typst::compile::<PagedDocument>(&world);
+        // docgen-side warnings first (fit-to-page shrink), then typst's own.
+        let mut warnings = emitted.warnings;
+        warnings.extend(
+            typst_warnings
+                .iter()
+                .map(|w| format!("typst warning: {}", w.message)),
+        );
         let paged = output.map_err(|errs| {
             let messages: Vec<String> = errs
                 .iter()

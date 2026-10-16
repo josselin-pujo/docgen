@@ -15,10 +15,16 @@
 //! backslash, so author content can never change markup structure. Diagram
 //! blocks and inline images become `#image(...)` references into the world's
 //! virtual files.
+//!
+//! Media blocks (lone-image paragraphs and diagrams) render as figures:
+//! captioned ones carry a document-wide number, a caption line and a
+//! `<fig-…>` label; internal links (`[text](#anchor)`) and the figures back
+//! matter link through those labels (D-004, D-006).
 
 use std::collections::HashSet;
 
 use docgen_core::assets::{AssetFormat, AssetMap};
+use docgen_core::media::{MediaPlan, fig_anchor, resolve_anchor};
 use docgen_core::model::{Block, BlockKind, Document, Inline, ListItem};
 
 /// Names of the virtual files the template can address.
@@ -69,6 +75,9 @@ pub struct Emitted {
     pub sources: Vec<(String, String)>,
     /// Binary virtual files (rendered diagrams).
     pub files: Vec<(String, Vec<u8>)>,
+    /// Deterministic docgen-side warnings (fit-to-page shrink, D-007),
+    /// surfaced alongside typst's own.
+    pub warnings: Vec<String>,
 }
 
 /// `template` replaces the built-in default; it can `#import`/`#include` the
@@ -76,12 +85,17 @@ pub struct Emitted {
 /// Emits the typst sources for a document (main + virtual modules).
 /// Public for fuzzing and golden tests; the renderer compiles these.
 pub fn emit(doc: &Document, assets: &AssetMap, template: Option<&str>) -> Emitted {
-    let mut body = String::with_capacity(4096);
-    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
-    let mut used_names: HashSet<String> = Default::default();
+    let mut em = Emitter {
+        assets,
+        files: Vec::new(),
+        used_names: HashSet::new(),
+        plan: MediaPlan::resolve(doc),
+        warnings: Vec::new(),
+    };
 
+    let mut body = String::with_capacity(4096);
     for block in &doc.blocks {
-        emit_block(block, assets, &mut files, &mut used_names, &mut body);
+        em.block(block, &mut body);
     }
 
     // Document metadata is global; generated unconditionally (a custom
@@ -110,7 +124,213 @@ pub fn emit(doc: &Document, assets: &AssetMap, template: Option<&str>) -> Emitte
             (BODY_PATH.to_string(), body),
             (META_PATH.to_string(), emit_meta(doc)),
         ],
-        files,
+        files: em.files,
+        warnings: em.warnings,
+    }
+}
+
+struct Emitter<'a> {
+    assets: &'a AssetMap,
+    files: Vec<(String, Vec<u8>)>,
+    used_names: HashSet<String>,
+    plan: MediaPlan,
+    warnings: Vec<String>,
+}
+
+impl<'a> Emitter<'a> {
+    fn block(&mut self, block: &Block, out: &mut String) {
+        match &block.kind {
+            BlockKind::Heading { level, inline } => {
+                let hashes = "=".repeat((*level).clamp(1, 6) as usize);
+                out.push_str(&format!(
+                    "{hashes} {} <{}>\n\n",
+                    inline_markup(inline, self.assets, &mut self.files, &mut self.used_names),
+                    typst_label(&block.id),
+                ));
+            }
+            BlockKind::Paragraph { inline } => match block.kind.lone_image() {
+                // A lone-image paragraph is a figure (D-004): captioned and
+                // numbered via the media plan, else exactly as before.
+                Some((url, alt)) => self.figure_block(block, Some((url, alt)), out),
+                None => out.push_str(&format!(
+                    "{}\n\n",
+                    inline_markup(inline, self.assets, &mut self.files, &mut self.used_names)
+                )),
+            },
+            BlockKind::CodeBlock { language, code } => {
+                let fence = fence_for(code);
+                let lang = language.as_deref().unwrap_or("");
+                out.push_str(&format!("{fence}{lang}\n{code}\n{fence}\n\n"));
+            }
+            BlockKind::Diagram { .. } => {
+                self.figure_block(block, None, out);
+            }
+            BlockKind::List {
+                ordered,
+                start,
+                items,
+            } => {
+                self.list(*ordered, *start, items, 0, out);
+                out.push('\n');
+            }
+            BlockKind::Table { rows } => {
+                self.table(rows, out);
+            }
+            BlockKind::BlockQuote { blocks } => {
+                out.push_str("#quote(block: true)[\n");
+                for child in blocks {
+                    if let BlockKind::Paragraph { inline } = &child.kind {
+                        out.push_str(&format!(
+                            "  {}\n\n",
+                            inline_markup(
+                                inline,
+                                self.assets,
+                                &mut self.files,
+                                &mut self.used_names
+                            )
+                        ));
+                    }
+                }
+                out.push_str("]\n\n");
+            }
+            BlockKind::ThematicBreak => {
+                out.push_str("#line(length: 100%)\n\n");
+            }
+        }
+    }
+
+    /// Emits a media block (lone-image paragraph or diagram) as a figure.
+    /// Captioned media (a number in the media plan) gets a keep-together
+    /// block, a "Figure N: caption" line and a `<fig-…>` label; uncaptioned
+    /// media renders exactly as it always has.
+    fn figure_block(&mut self, block: &Block, image: Option<(&str, &[Inline])>, out: &mut String) {
+        // Diagram without a rendered asset: keep it visible so reviews
+        // catch silent degradation.
+        if image.is_none() && !self.assets.contains_key(&block.id) {
+            let src = match &block.kind {
+                BlockKind::Diagram { source, .. } => source.clone(),
+                _ => unreachable!(),
+            };
+            let fence = fence_for(&src);
+            out.push_str(
+                "#block(fill: rgb(255, 244, 229), inset: 8pt, radius: 4pt)[\n  #text(size: 0.8em)[#box[diagram not rendered]]\n",
+            );
+            out.push_str(&format!("  {fence}\n{src}\n  {fence}\n]\n\n"));
+            return;
+        }
+        // Lone image without bytes: the plain linked-alt-text rendering.
+        if let Some((url, alt)) = image
+            && !self.assets.contains_key(url)
+        {
+            out.push_str(&format!(
+                "{}\n\n",
+                inline_markup(
+                    &[Inline::Image {
+                        url: url.to_string(),
+                        alt: alt.to_vec(),
+                    }],
+                    self.assets,
+                    &mut self.files,
+                    &mut self.used_names,
+                )
+            ));
+            return;
+        }
+
+        let asset = match image {
+            Some((url, _)) => self.assets.get(url).unwrap(),
+            None => self.assets.get(&block.id).unwrap(),
+        };
+        let name = match image {
+            Some((url, _)) => image_file_name(url, asset.format, &mut self.used_names),
+            None => asset_file_name(block, asset.format, &mut self.used_names),
+        };
+        self.files
+            .push((format!("assets/{name}"), asset.bytes.clone()));
+        let img = format!("#align(center)[#image(\"assets/{name}\", width: 92%)]");
+
+        let plan = self.plan.figure(&block.id);
+        match (
+            plan.and_then(|f| f.number),
+            plan.and_then(|f| f.caption.clone()),
+        ) {
+            (Some(n), Some(c)) => {
+                if block.keeps_together() {
+                    out.push_str(&format!(
+                        "#block(breakable: false)[\n  {img}\n  #v(0.5em)\n  #align(center)[#text(size: 0.85em)[Figure {n}: {}]]\n]\n",
+                        esc(&c)
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "{img}\n#v(0.5em)\n#align(center)[#text(size: 0.85em)[Figure {n}: {}]]\n",
+                        esc(&c)
+                    ));
+                }
+            }
+            _ => out.push_str(&format!("{img}\n\n")),
+        }
+        out.push_str(&format!("<{}>\n\n", typst_label(&fig_anchor(&block.id))));
+    }
+
+    fn list(
+        &mut self,
+        ordered: bool,
+        start: u64,
+        items: &[ListItem],
+        depth: usize,
+        out: &mut String,
+    ) {
+        let indent = "  ".repeat(depth);
+        for (i, item) in items.iter().enumerate() {
+            let marker = if ordered {
+                format!("{}.", start + i as u64)
+            } else {
+                "-".to_string()
+            };
+            out.push_str(&format!(
+                "{indent}{marker} {}\n",
+                inline_markup(
+                    &item.content,
+                    self.assets,
+                    &mut self.files,
+                    &mut self.used_names
+                )
+            ));
+            for child in &item.children {
+                if let BlockKind::List {
+                    ordered,
+                    start,
+                    items,
+                } = &child.kind
+                {
+                    self.list(*ordered, *start, items, depth + 1, out);
+                }
+            }
+        }
+    }
+
+    fn table(&mut self, rows: &[docgen_core::model::TableRow], out: &mut String) {
+        let Some(first) = rows.first() else { return };
+        let cols = first.cells.len().max(1);
+        out.push_str(&format!("#table(columns: {cols},\n"));
+        for (ri, row) in rows.iter().enumerate() {
+            let cells: Vec<String> = row
+                .cells
+                .iter()
+                .map(|c| {
+                    format!(
+                        "[{}]",
+                        inline_markup(c, self.assets, &mut self.files, &mut self.used_names)
+                    )
+                })
+                .collect();
+            if ri == 0 && row.is_header {
+                out.push_str(&format!("  table.header({}),\n", cells.join(", ")));
+            } else {
+                out.push_str(&format!("  {},\n", cells.join(", ")));
+            }
+        }
+        out.push_str(")\n\n");
     }
 }
 
@@ -195,170 +415,6 @@ fn json_to_typst(v: &serde_json::Value) -> String {
     }
 }
 
-fn emit_block(
-    block: &Block,
-    assets: &AssetMap,
-    files: &mut Vec<(String, Vec<u8>)>,
-    used_names: &mut HashSet<String>,
-    out: &mut String,
-) {
-    match &block.kind {
-        BlockKind::Heading { level, inline } => {
-            let hashes = "=".repeat((*level).clamp(1, 6) as usize);
-            out.push_str(&format!(
-                "{hashes} {}\n\n",
-                inline_markup(inline, assets, files, used_names)
-            ));
-        }
-        BlockKind::Paragraph { inline } => {
-            // A paragraph that is exactly one image renders as a centered
-            // figure at 92% width (matching diagrams); anything else flows
-            // inline at natural size.
-            let figure = match inline.as_slice() {
-                [Inline::Image { url, .. }] => assets.get(url).map(|asset| (url.as_str(), asset)),
-                _ => None,
-            };
-            match figure {
-                Some((url, asset)) => {
-                    let name = image_file_name(url, asset.format, used_names);
-                    files.push((format!("assets/{name}"), asset.bytes.clone()));
-                    out.push_str(&format!(
-                        "#align(center)[#image(\"assets/{name}\", width: 92%)]\n\n"
-                    ));
-                }
-                None => out.push_str(&format!(
-                    "{}\n\n",
-                    inline_markup(inline, assets, files, used_names)
-                )),
-            }
-        }
-        BlockKind::CodeBlock { language, code } => {
-            let fence = fence_for(code);
-            let lang = language.as_deref().unwrap_or("");
-            out.push_str(&format!("{fence}{lang}\n{code}\n{fence}\n\n"));
-        }
-        BlockKind::Diagram { .. } => {
-            match assets.get(&block.id) {
-                Some(asset) => {
-                    let name = asset_file_name(block, asset.format, used_names);
-                    files.push((format!("assets/{name}"), asset.bytes.clone()));
-                    out.push_str(&format!(
-                        "#align(center)[#image(\"assets/{name}\", width: 92%)]\n\n"
-                    ));
-                }
-                None => {
-                    // No engine for this diagram (yet): keep it visible so
-                    // reviews catch silent degradation.
-                    let src = match &block.kind {
-                        BlockKind::Diagram { source, .. } => source.clone(),
-                        _ => unreachable!(),
-                    };
-                    let fence = fence_for(&src);
-                    out.push_str(
-                        "#block(fill: rgb(255, 244, 229), inset: 8pt, radius: 4pt)[\n  #text(size: 0.8em)[#box[diagram not rendered]]\n",
-                    );
-                    out.push_str(&format!("  {fence}\n{src}\n  {fence}\n]\n\n"));
-                }
-            }
-        }
-        BlockKind::List {
-            ordered,
-            start,
-            items,
-        } => {
-            emit_list(*ordered, *start, items, 0, assets, files, used_names, out);
-            out.push('\n');
-        }
-        BlockKind::Table { rows } => {
-            emit_table(rows, assets, files, used_names, out);
-        }
-        BlockKind::BlockQuote { blocks } => {
-            out.push_str("#quote(block: true)[\n");
-            for child in blocks {
-                if let BlockKind::Paragraph { inline } = &child.kind {
-                    out.push_str(&format!(
-                        "  {}\n\n",
-                        inline_markup(inline, assets, files, used_names)
-                    ));
-                }
-            }
-            out.push_str("]\n\n");
-        }
-        BlockKind::ThematicBreak => {
-            out.push_str("#line(length: 100%)\n\n");
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_list(
-    ordered: bool,
-    start: u64,
-    items: &[ListItem],
-    depth: usize,
-    assets: &AssetMap,
-    files: &mut Vec<(String, Vec<u8>)>,
-    used_names: &mut HashSet<String>,
-    out: &mut String,
-) {
-    let indent = "  ".repeat(depth);
-    for (i, item) in items.iter().enumerate() {
-        let marker = if ordered {
-            format!("{}.", start + i as u64)
-        } else {
-            "-".to_string()
-        };
-        out.push_str(&format!(
-            "{indent}{marker} {}\n",
-            inline_markup(&item.content, assets, files, used_names)
-        ));
-        for child in &item.children {
-            if let BlockKind::List {
-                ordered,
-                start,
-                items,
-            } = &child.kind
-            {
-                emit_list(
-                    *ordered,
-                    *start,
-                    items,
-                    depth + 1,
-                    assets,
-                    files,
-                    used_names,
-                    out,
-                );
-            }
-        }
-    }
-}
-
-fn emit_table(
-    rows: &[docgen_core::model::TableRow],
-    assets: &AssetMap,
-    files: &mut Vec<(String, Vec<u8>)>,
-    used_names: &mut HashSet<String>,
-    out: &mut String,
-) {
-    let Some(first) = rows.first() else { return };
-    let cols = first.cells.len().max(1);
-    out.push_str(&format!("#table(columns: {cols},\n"));
-    for (ri, row) in rows.iter().enumerate() {
-        let cells: Vec<String> = row
-            .cells
-            .iter()
-            .map(|c| format!("[{}]", inline_markup(c, assets, files, used_names)))
-            .collect();
-        if ri == 0 && row.is_header {
-            out.push_str(&format!("  table.header({}),\n", cells.join(", ")));
-        } else {
-            out.push_str(&format!("  {},\n", cells.join(", ")));
-        }
-    }
-    out.push_str(")\n\n");
-}
-
 fn asset_file_name(block: &Block, format: AssetFormat, used: &mut HashSet<String>) -> String {
     let sanitize: String = block
         .id
@@ -411,9 +467,31 @@ fn image_file_name(url: &str, format: AssetFormat, used: &mut HashSet<String>) -
     name
 }
 
+/// Typst label names allow alphanumerics plus `_-.` and `:`; anything else
+/// becomes `_` so authored ids can never break label syntax.
+fn typst_label(id: &str) -> String {
+    id.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Internal link markup to a docgen anchor (block id or `fig-…` figure
+/// anchor).
+fn internal_link(anchor: &str) -> String {
+    format!("#link(<{}>)", typst_label(anchor))
+}
+
 /// Inline content → typst markup. Images with bytes in `assets` become
 /// `#image("assets/<name>")`; unknown ones keep their alt text visible
 /// (linked), so reviews catch missing files instead of silent gaps.
+/// Links to `#fragment` URLs become internal label links; everything else
+/// is an external `#link("url")`.
 fn inline_markup(
     inlines: &[Inline],
     assets: &AssetMap,
@@ -447,6 +525,14 @@ fn inline_markup(
                 out.push_str(&format!(
                     "#text(strike: true)[{}]",
                     inline_markup(inner, assets, files, used_names)
+                ));
+            }
+            Inline::Link { url, text } if url.starts_with('#') => {
+                let anchor = resolve_anchor(url.trim_start_matches('#'));
+                out.push_str(&format!(
+                    "{}[{}]",
+                    internal_link(&anchor),
+                    inline_markup(text, assets, files, used_names)
                 ));
             }
             Inline::Link { url, text } => {
@@ -531,6 +617,7 @@ fn fence_for(code: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use docgen_core::assets::RenderedAsset;
 
     #[test]
     fn escapes_markup() {
@@ -570,10 +657,25 @@ mod tests {
         assert!(meta.contains("\"index\": true"), "{meta}");
     }
 
-    fn named_png() -> docgen_core::assets::RenderedAsset {
-        docgen_core::assets::RenderedAsset {
+    fn named_png() -> RenderedAsset {
+        RenderedAsset {
             format: AssetFormat::Png,
             bytes: vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A],
+        }
+    }
+
+    /// A real decodable 1x1 white PNG, for tests that compile.
+    fn tiny_png() -> RenderedAsset {
+        RenderedAsset {
+            format: AssetFormat::Png,
+            bytes: vec![
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49,
+                0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06,
+                0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0B, 0x49, 0x44,
+                0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8, 0x0F, 0x04, 0x00, 0x09, 0xFB, 0x03, 0xFD,
+                0xFB, 0x5E, 0x6B, 0x2B, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+                0x42, 0x60, 0x82,
+            ],
         }
     }
 
@@ -601,12 +703,75 @@ mod tests {
 
     #[test]
     fn image_only_paragraph_becomes_centered_figure() {
-        let doc = docgen_core::parse_document("![hero](img/hero.png)\n").unwrap();
+        // Empty alt text → no caption → exactly the plain rendering.
+        let doc = docgen_core::parse_document("![](img/hero.png)\n").unwrap();
         let mut assets = AssetMap::new();
         assets.insert("img/hero.png".to_string(), named_png());
         let out = emit(&doc, &assets, None);
         assert!(
             body_of(&out).contains("#align(center)[#image(\"assets/hero.png\", width: 92%)]"),
+            "{}",
+            body_of(&out)
+        );
+        assert!(!body_of(&out).contains("Figure"), "{}", body_of(&out));
+    }
+
+    #[test]
+    fn captioned_figure_carries_number_caption_label_and_keep() {
+        let doc = docgen_core::parse_document("![The hero](img/hero.png){#fig:hero}\n").unwrap();
+        let mut assets = AssetMap::new();
+        assets.insert("img/hero.png".to_string(), named_png());
+        let out = emit(&doc, &assets, None);
+        let body = body_of(&out);
+        assert!(body.contains("#block(breakable: false)["), "{body}");
+        assert!(body.contains("Figure 1: The hero"), "{body}");
+        assert!(body.contains("<fig-hero>"), "{body}");
+    }
+
+    #[test]
+    fn keep_false_relaxes_the_figure_block() {
+        let doc = docgen_core::parse_document("![The hero](img/hero.png){#fig:hero keep=false}\n")
+            .unwrap();
+        let mut assets = AssetMap::new();
+        assets.insert("img/hero.png".to_string(), named_png());
+        let out = emit(&doc, &assets, None);
+        let body = body_of(&out);
+        assert!(!body.contains("breakable: false"), "{body}");
+        assert!(body.contains("Figure 1: The hero"), "{body}");
+    }
+
+    #[test]
+    fn captioned_diagram_is_a_numbered_figure() {
+        let doc =
+            docgen_core::parse_document("```mermaid {#arch} caption=\"System\"\ngraph TD\n```\n")
+                .unwrap();
+        let mut assets = AssetMap::new();
+        assets.insert("arch".to_string(), named_png());
+        let out = emit(&doc, &assets, None);
+        let body = body_of(&out);
+        assert!(body.contains("Figure 1: System"), "{body}");
+        assert!(body.contains("<fig-arch>"), "{body}");
+    }
+
+    #[test]
+    fn headings_carry_labels_and_internal_links_target_them() {
+        let doc = docgen_core::parse_document(
+            "# Overview {#ov}\n\nSee [details](#ov) and [arch](#fig:arch).\n",
+        )
+        .unwrap();
+        let out = emit(&doc, &Default::default(), None);
+        let body = body_of(&out);
+        assert!(body.contains("= Overview <ov>\n\n"), "{body}");
+        assert!(body.contains("#link(<ov>)[details]"), "{body}");
+        assert!(body.contains("#link(<fig-arch>)[arch]"), "{body}");
+    }
+
+    #[test]
+    fn external_links_stay_string_targets() {
+        let doc = docgen_core::parse_document("[site](https://x.example)\n").unwrap();
+        let out = emit(&doc, &Default::default(), None);
+        assert!(
+            body_of(&out).contains("#link(\"https://x.example\")[site]"),
             "{}",
             body_of(&out)
         );
@@ -621,5 +786,22 @@ mod tests {
             "{}",
             body_of(&out)
         );
+    }
+
+    /// Dangling labels are typst errors, so compiling a doc whose links
+    /// target emitted labels and figure anchors proves the wiring.
+    #[test]
+    fn internal_links_compile_against_emitted_labels() {
+        let doc = docgen_core::parse_document(
+            "```mermaid {#arch} caption=\"System\"\ngraph TD\n```\n\nSee [the diagram](#fig:arch) and [intro](#intro).\n\n# Intro {#intro}\n",
+        )
+        .unwrap();
+        let mut assets = AssetMap::new();
+        assets.insert("arch".to_string(), tiny_png());
+        let (pdf, warnings) = crate::TypstRenderer::new_embedded()
+            .render_pdf(&doc, &assets)
+            .unwrap();
+        assert!(pdf.starts_with(b"%PDF"));
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 }
