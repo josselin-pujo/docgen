@@ -24,8 +24,8 @@
 use std::collections::HashSet;
 
 use docgen_core::assets::{AssetFormat, AssetMap};
-use docgen_core::media::{MediaPlan, fig_anchor, resolve_anchor};
-use docgen_core::model::{Block, BlockKind, Document, Inline, ListItem, Orientation};
+use docgen_core::media::{FigurePlan, MediaPlan, fig_anchor, resolve_anchor};
+use docgen_core::model::{Block, BlockKind, Document, Inline, ListItem, Orientation, Placement};
 
 /// Names of the virtual files the template can address.
 pub const BODY_PATH: &str = "docgen-body.typ";
@@ -95,12 +95,34 @@ pub fn emit(doc: &Document, assets: &AssetMap, template: Option<&str>) -> Emitte
     };
 
     let mut body = String::with_capacity(4096);
+    let mut appendix = String::new();
+    let mut appendix_count = 0usize;
     // Page controls ride the default template only — custom templates own
     // their page setup (D-006).
     let page_ctl = template.is_none();
     let spans = page_spans(doc);
     let mut orientation = Orientation::Portrait;
     for (i, block) in doc.blocks.iter().enumerate() {
+        // Media placed in the appendix leaves a "Figure N" reference at its
+        // original position and renders in the back matter (D-003, D-010).
+        // Uncaptioned media relocates without a reference.
+        if let Some(fp) = em.plan.figure(&block.id)
+            && fp.placement == Placement::Appendix
+        {
+            if let Some(label) = fp.label() {
+                body.push_str(&format!(
+                    "{}[{}]
+
+",
+                    internal_link(&fig_anchor(&block.id)),
+                    esc(&label)
+                ));
+            }
+            let image = block.kind.lone_image();
+            em.figure_block(block, image, spans[i], &mut appendix);
+            appendix_count += 1;
+            continue;
+        }
         if page_ctl {
             let want = spans[i];
             // A figure's `page=` always forces its own page (D-010 (3));
@@ -121,6 +143,7 @@ pub fn emit(doc: &Document, assets: &AssetMap, template: Option<&str>) -> Emitte
         }
         em.block(block, spans[i], &mut body);
     }
+    em.back_matter(&mut body, &appendix, appendix_count, orientation);
 
     // Document metadata is global; generated unconditionally (a custom
     // template may override it with its own `#set document(...)`).
@@ -498,6 +521,80 @@ fn image_file_name(url: &str, format: AssetFormat, used: &mut HashSet<String>) -
         name = format!("{base}-{n}.{}", format.extension());
     }
     name
+}
+
+impl<'a> Emitter<'a> {
+    /// Appends the media back matter (D-003, D-010): the figures appendix
+    /// (content already rendered into `appendix` during the body walk) and
+    /// the figures index with page numbers. Both start on a fresh page and
+    /// inherit the document orientation — an open landscape section is
+    /// closed here explicitly.
+    fn back_matter(
+        &self,
+        body: &mut String,
+        appendix: &str,
+        appendix_count: usize,
+        orientation: Orientation,
+    ) {
+        let index_entries: Vec<&FigurePlan> = self.plan.index_figures().collect();
+        let with_index = self.plan.index_requested && !index_entries.is_empty();
+        if appendix_count == 0 && !with_index {
+            return;
+        }
+        if orientation != Orientation::Portrait {
+            // The page set rule starts the fresh page itself.
+            body.push_str(
+                "#set page(flipped: false)
+
+",
+            );
+        } else {
+            body.push_str(
+                "#pagebreak()
+
+",
+            );
+        }
+        if appendix_count > 0 {
+            body.push_str(
+                "#heading(numbering: none, level: 1)[Figures]
+
+",
+            );
+            body.push_str(appendix);
+        }
+        if with_index {
+            if appendix_count > 0 {
+                body.push_str(
+                    "#pagebreak()
+
+",
+                );
+            }
+            body.push_str(
+                "#heading(numbering: none, level: 1)[List of Figures]
+
+",
+            );
+            for f in index_entries {
+                body.push_str(&self.index_entry(f));
+            }
+        }
+    }
+
+    /// One index line: "Figure N: caption", filled to a right-aligned page
+    /// number resolved from the figure's label.
+    fn index_entry(&self, f: &FigurePlan) -> String {
+        let anchor = typst_label(&fig_anchor(&f.block_id));
+        format!(
+            "#context[#link(<{anchor}>)[Figure {n}]: {caption} #h(1fr) p. #query(<{anchor}>).first().location().page()]
+
+",
+            anchor = anchor,
+            n = f.number.unwrap_or_default(),
+            caption = esc(f.caption.as_deref().unwrap_or("")),
+        )
+    }
 }
 
 /// Effective page orientation for every top-level block (D-010): a
@@ -1278,5 +1375,124 @@ b.
             walk(&page.frame, &mut out);
         }
         out
+    }
+
+    #[test]
+    fn appendix_mode_relocates_and_leaves_references() {
+        let doc = docgen_core::parse_document(
+            "---
+title: T
+media:
+  placement: appendix
+---
+
+Intro.
+
+```mermaid {#d1} caption=\"One\"
+graph TD
+```
+
+![Two](t.png){#fig:t}
+",
+        )
+        .unwrap();
+        let mut assets = AssetMap::new();
+        assets.insert("d1".to_string(), named_png());
+        assets.insert("t.png".to_string(), named_png());
+        let out = emit(&doc, &assets, None);
+        let body = body_of(&out);
+        // References at the original positions...
+        assert!(body.contains("#link(<fig-d1>)[Figure 1]"), "{body}");
+        assert!(body.contains("#link(<fig-t>)[Figure 2]"), "{body}");
+        // ...and the figures themselves only in the back matter, after the
+        // appendix heading, in document order.
+        let appendix_at = body
+            .find("#heading(numbering: none, level: 1)[Figures]")
+            .expect("appendix heading");
+        let tail = &body[appendix_at..];
+        let d1_at = tail.find("<fig-d1>").expect("d1 label");
+        let t_at = tail.find("<fig-t>").expect("t label");
+        assert!(appendix_at < d1_at && d1_at < t_at, "{body}");
+        assert!(
+            !body[..appendix_at].contains("Figure 1: One"),
+            "figure content must not render at the inline position: {body}"
+        );
+    }
+
+    #[test]
+    fn figures_index_lists_numbered_figures_with_pages() {
+        let doc = docgen_core::parse_document(
+            "---
+title: T
+media:
+  index: true
+---
+
+![Only](o.png){#fig:o}
+",
+        )
+        .unwrap();
+        let mut assets = AssetMap::new();
+        assets.insert("o.png".to_string(), named_png());
+        let out = emit(&doc, &assets, None);
+        let body = body_of(&out);
+        assert!(
+            body.contains("#heading(numbering: none, level: 1)[List of Figures]"),
+            "{body}"
+        );
+        assert!(
+            body.contains(
+                "#context[#link(<fig-o>)[Figure 1]: Only #h(1fr) p. #query(<fig-o>).first().location().page()]"
+            ),
+            "{body}"
+        );
+        // No appendix content → no appendix heading.
+        assert!(!body.contains("[Figures]"), "{body}");
+    }
+
+    /// The back-matter markup (label links, location/page expressions) must
+    /// compile — dangling labels or bad context code are typst errors.
+    #[test]
+    fn back_matter_compiles_with_working_links() {
+        let doc = docgen_core::parse_document(
+            "---
+title: T
+media:
+  placement: appendix
+  index: true
+---
+
+Intro.
+
+```mermaid {#d1} caption=\"One\"
+graph TD
+```
+
+More.
+
+![Two](t.png){#fig:t}
+
+# Wide {#w page=landscape}
+
+Wide section after which the back matter resets orientation.
+",
+        )
+        .unwrap();
+        let mut assets = AssetMap::new();
+        assets.insert("d1".to_string(), tiny_png());
+        assets.insert("t.png".to_string(), tiny_png());
+        let (paged, warnings) = crate::TypstRenderer::new_embedded()
+            .compile(&doc, &assets)
+            .unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        // Cover/body + appendix pages + index page.
+        assert!(paged.pages().len() >= 3, "{}", paged.pages().len());
+        // The back matter closed the landscape section: the last page is
+        // portrait (D-010: the appendix inherits the document orientation).
+        let last = format!("{:?}", paged.pages().last().unwrap().frame.size());
+        assert!(
+            last.contains("595.2755905511812pt, 841.8897637795276pt"),
+            "{last}"
+        );
     }
 }
