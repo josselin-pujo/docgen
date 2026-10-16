@@ -16,7 +16,7 @@ mod template;
 use docgen_core::Result as CoreResult;
 use docgen_core::assets::AssetMap;
 use docgen_core::diff::{self, DiffOptions};
-use docgen_core::model::Document;
+use docgen_core::model::{Document, Orientation, Placement};
 
 use crate::docx::package::Package;
 use crate::{Error, Result};
@@ -140,6 +140,39 @@ pub(crate) fn build_package(
         pkg.add(format!("ppt/media/{name}"), bytes.clone());
     }
     pkg.build()
+}
+
+/// Directives the frozen pptx backend cannot honor (D-005, D-012):
+/// media placement, the figures index and per-block page orientation —
+/// PresentationML page setup is deck-wide (`sldSz`). Deterministic; hosts
+/// surface these alongside the rendered deck, whose output is unchanged.
+pub fn unsupported_directive_warnings(doc: &Document) -> Vec<String> {
+    let mut out = Vec::new();
+    let config = doc.frontmatter.media();
+    if config.placement == Placement::Appendix {
+        out.push("pptx: media.placement=appendix is not supported; media stays inline".to_string());
+    }
+    if config.index {
+        out.push("pptx: media.index has no effect; no figures index is generated".to_string());
+    }
+    let mut warned_place = false;
+    for block in &doc.blocks {
+        if block.annotations.place.is_some() && !warned_place {
+            warned_place = true;
+            out.push("pptx: place= is not supported; media stays inline".to_string());
+        }
+        if let Some(page) = block.annotations.page {
+            let name = match page {
+                Orientation::Landscape => "landscape",
+                Orientation::Portrait => "portrait",
+            };
+            out.push(format!(
+                "pptx: page={name} on block '{}' is not supported; page setup is deck-wide",
+                block.id
+            ));
+        }
+    }
+    out
 }
 
 /// Validates that a buffer looks like a pptx we can process: a zip whose
@@ -513,5 +546,74 @@ mod tests {
         assert!(read_part(&filled, "ppt/slides/slide1.xml").contains("Shell"));
         assert!(read_part(&filled, "ppt/slides/slide2.xml").contains("Keep"));
         assert!(read_part(&filled, "ppt/slides/slide3.xml").contains("Fresh"));
+    }
+
+    #[test]
+    fn unsupported_directives_are_reported_without_output_change() {
+        use docgen_core::parse_document;
+        let doc = parse_document(
+            "---
+title: T
+media:
+  placement: appendix
+  index: true
+---
+
+# H {page=landscape}
+
+```mermaid {#d} place=inline
+graph TD
+```
+",
+        )
+        .unwrap();
+        let warnings = unsupported_directive_warnings(&doc);
+        assert!(
+            warnings.iter().any(|w| w.contains("placement=appendix")),
+            "{warnings:?}"
+        );
+        assert!(
+            warnings.iter().any(|w| w.contains("media.index")),
+            "{warnings:?}"
+        );
+        assert!(
+            warnings.iter().any(|w| w.contains("place=")),
+            "{warnings:?}"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("page=landscape") && w.contains("'h'")),
+            "{warnings:?}"
+        );
+        // The directives leave the deck itself untouched.
+        let plain = parse_document(
+            "---
+title: T
+---
+
+# H
+
+text
+",
+        )
+        .unwrap();
+        let with = parse_document(
+            "---
+title: T
+media:
+  placement: appendix
+---
+
+# H {page=landscape}
+
+text
+",
+        )
+        .unwrap();
+        let a = render_pptx(&plain, &Default::default()).unwrap();
+        let b = render_pptx(&with, &Default::default()).unwrap();
+        assert_eq!(a, b, "directives must not change pptx output");
+        assert!(unsupported_directive_warnings(&plain).is_empty());
     }
 }

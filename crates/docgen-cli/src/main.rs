@@ -166,6 +166,10 @@ fn render(
             let outcome = docgen_core::assets::render_diagrams_with(&doc, &[&mermaid, &excalidraw])
                 .context("rendering diagrams")?;
             warn_skipped(&outcome.skipped);
+            // pptx is frozen: page/media directives are ignored, loudly.
+            for w in docgen_office::pptx::unsupported_directive_warnings(&doc) {
+                eprintln!("warning: {w}");
+            }
 
             let bytes = match template {
                 Some(template_path) => {
