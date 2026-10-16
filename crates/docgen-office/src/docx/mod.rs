@@ -579,4 +579,68 @@ After.
             "the landscape section closes after the figure: {xml}"
         );
     }
+
+    #[test]
+    fn appendix_mode_moves_figures_and_links_back() {
+        let doc = parse_document(
+            "---
+title: T
+media:
+  placement: appendix
+---
+
+Intro.
+
+```mermaid {#d1} caption=\"One\"
+graph TD
+```
+
+Outro.
+",
+        )
+        .unwrap();
+        let mut assets = BTreeMap::new();
+        assets.insert("d1".to_string(), png_asset());
+        let bytes = render_docx(&doc, &assets).unwrap();
+        validate_docx(&bytes).unwrap();
+        let xml = unzip_document(&bytes);
+        let ref_at = xml
+            .find("<w:hyperlink w:anchor=\"fig_d1\"")
+            .expect("inline reference");
+        let heading_at = xml.find(">Figures<").expect("appendix heading");
+        let drawing_at = xml.find("w:drawing").expect("relocated figure");
+        assert!(ref_at < heading_at && heading_at < drawing_at, "{xml}");
+    }
+
+    #[test]
+    fn figures_index_lists_linked_entries() {
+        let doc = parse_document(
+            "---
+title: T
+media:
+  index: true
+---
+
+![Only one](o.png){#fig:o}
+",
+        )
+        .unwrap();
+        let mut assets = BTreeMap::new();
+        assets.insert("o.png".to_string(), png_asset());
+        let bytes = render_docx(&doc, &assets).unwrap();
+        validate_docx(&bytes).unwrap();
+        let xml = unzip_document(&bytes);
+        // Heading runs are word-split; match its tail.
+        assert!(xml.contains(">Figures<"), "{xml}");
+        let index_at = xml.find(">Figures<").expect("index heading");
+        let entry_at = xml
+            .find("<w:hyperlink w:anchor=\"fig_o\"")
+            .expect("index entry");
+        assert!(index_at < entry_at, "{xml}");
+        assert!(xml.contains("Figure "), "numbered entry: {xml}");
+        assert!(xml.contains("Only one"), "caption text: {xml}");
+        // Links-only: no page numbers (D-006) — the entry is a single link.
+        let entry_end = entry_at + xml[entry_at..].find("</w:hyperlink>").expect("entry end");
+        assert!(!xml[entry_at..entry_end].contains("p."), "{xml}");
+    }
 }

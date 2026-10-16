@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use docgen_core::assets::{AssetFormat, AssetMap};
 use docgen_core::diff::{ContentChange, DiffPlan, LineOp, Run, RunOp, Step, flatten_runs_pub};
 use docgen_core::media::{MediaPlan, fig_anchor, page_spans, resolve_anchor};
+use docgen_core::model::Placement;
 use docgen_core::model::{
     Block, BlockKind, DiagramFormat, Document, Inline, ListItem, Orientation, TableRow,
 };
@@ -803,7 +804,7 @@ impl<'a> Emitter<'a> {
 
         self.paragraph_open(None, mark, true);
         let close = self.open_mark(mark);
-        let bookmark = self.figure_anchors.get(&block.id).cloned();
+        let bookmark = self.figure_anchors.get(&fig_anchor(&block.id)).cloned();
         if let Some(name) = &bookmark {
             let id = self.next_bookmark_id;
             self.next_bookmark_id += 1;
@@ -897,6 +898,107 @@ impl<'a> Emitter<'a> {
         );
     }
 
+    /// The "Figure N" reference left at a media block's original position
+    /// when it renders in the appendix: a centered anchor hyperlink.
+    fn write_figure_reference(&mut self, anchor: &str, label: &str) {
+        let Some(name) = self.figure_anchors.get(anchor).cloned() else {
+            return;
+        };
+        self.xml.start("w:p", &[]);
+        self.xml.start("w:pPr", &[]);
+        self.xml.empty("w:jc", &[("w:val", "center")]);
+        self.xml.end("w:pPr");
+        self.xml.start("w:hyperlink", &[("w:anchor", &name)]);
+        self.in_hyperlink = true;
+        self.write_run(
+            &Run {
+                text: label.to_string(),
+                ..Default::default()
+            },
+            Mark::None,
+        );
+        self.in_hyperlink = false;
+        self.xml.end("w:hyperlink");
+        self.xml.end("w:p");
+    }
+
+    /// The media back matter (D-003, D-010): the figures appendix (a
+    /// heading plus the relocated figures, each honoring its own `page=`)
+    /// and the links-only figures index (no page numbers, D-006). Both
+    /// start on a fresh page and inherit the document orientation: an open
+    /// landscape section is closed explicitly.
+    fn write_back_matter(&mut self, appendix: &[&Block], assets: &AssetMap) {
+        let index_entries: Vec<(String, u32, String)> = self
+            .plan
+            .index_figures()
+            .filter_map(|f| {
+                let n = f.number?;
+                Some((f.block_id.clone(), n, f.caption.clone()?))
+            })
+            .collect();
+        let with_index = self.plan.index_requested && !index_entries.is_empty();
+        if appendix.is_empty() && !with_index {
+            return;
+        }
+        if self.orientation() != Orientation::Portrait {
+            // The section break already starts the fresh page.
+            self.close_section();
+            self.set_orientation(Orientation::Portrait);
+        } else {
+            self.pending_page_break = true;
+        }
+        if !appendix.is_empty() {
+            self.paragraph_open(Some("Heading1"), Mark::None, false);
+            self.write_runs(&[Inline::Text("Figures".to_string())], Mark::None);
+            self.paragraph_close();
+            for block in appendix {
+                let media = block.kind.lone_image().is_some() || block.kind.is_diagram();
+                let own = if media { block.annotations.page } else { None };
+                match own {
+                    Some(fig_o) => {
+                        let surrounding = self.orientation();
+                        if surrounding != fig_o {
+                            self.close_section();
+                        }
+                        self.set_orientation(fig_o);
+                        self.write_block(block, Mark::None, assets);
+                        self.close_section();
+                        self.set_orientation(surrounding);
+                    }
+                    None => self.write_block(block, Mark::None, assets),
+                }
+            }
+        }
+        if with_index {
+            if !appendix.is_empty() {
+                self.pending_page_break = true;
+            }
+            self.paragraph_open(Some("Heading1"), Mark::None, false);
+            self.write_runs(&[Inline::Text("List of Figures".to_string())], Mark::None);
+            self.paragraph_close();
+            for (block_id, number, caption) in index_entries {
+                let Some(name) = self.figure_anchors.get(&fig_anchor(&block_id)).cloned() else {
+                    continue;
+                };
+                self.xml.start("w:p", &[]);
+                self.xml.start("w:pPr", &[]);
+                self.xml.end("w:pPr");
+                self.xml.start("w:hyperlink", &[("w:anchor", &name)]);
+                self.in_hyperlink = true;
+                self.write_run(
+                    &Run {
+                        text: format!("Figure {number}: {caption}"),
+                        ..Default::default()
+                    },
+                    Mark::None,
+                );
+                self.in_hyperlink = false;
+                self.xml.end("w:hyperlink");
+                self.xml.end("w:p");
+            }
+        }
+    }
+
     /// A captioned lone-image paragraph as a figure: centered embedded
     /// image with its bookmark, then the caller writes the caption.
     fn write_figure_image(&mut self, url: &str, alt: &[Inline], block: &Block) {
@@ -933,7 +1035,7 @@ impl<'a> Emitter<'a> {
         self.media.next_docpr += 1;
         let alt_text = Inline::plain_text(alt);
         self.paragraph_open(None, Mark::None, true);
-        let bookmark = self.figure_anchors.get(&block.id).cloned();
+        let bookmark = self.figure_anchors.get(&fig_anchor(&block.id)).cloned();
         let bm_id = bookmark.is_some().then(|| {
             let id = self.next_bookmark_id;
             self.next_bookmark_id += 1;
@@ -1613,7 +1715,7 @@ pub(crate) fn render(
     for block in &doc.blocks {
         if block.kind.lone_image().is_some() || block.kind.is_diagram() {
             let name = bookmark_name(&fig_anchor(&block.id), &mut used_names);
-            figure_anchors.insert(block.id.clone(), name);
+            figure_anchors.insert(fig_anchor(&block.id), name);
         }
     }
     emitter.figure_anchors = figure_anchors;
@@ -1638,7 +1740,20 @@ pub(crate) fn render(
         }
         None => {
             let spans = page_spans(doc);
+            let mut appendix: Vec<&Block> = Vec::new();
             for (i, block) in doc.blocks.iter().enumerate() {
+                // Media placed in the appendix leaves a "Figure N" reference
+                // at its original position and renders in the back matter
+                // (D-003). Uncaptioned media relocates without a reference.
+                if let Some(fp) = emitter.plan.figure(&block.id)
+                    && fp.placement == Placement::Appendix
+                {
+                    if let Some(label) = fp.label() {
+                        emitter.write_figure_reference(&fig_anchor(&block.id), &label);
+                    }
+                    appendix.push(block);
+                    continue;
+                }
                 let media = block.kind.lone_image().is_some() || block.kind.is_diagram();
                 let own = if media { block.annotations.page } else { None };
                 match own {
@@ -1663,6 +1778,7 @@ pub(crate) fn render(
                     }
                 }
             }
+            emitter.write_back_matter(&appendix, assets);
         }
     }
     let final_orientation = emitter.orientation();
