@@ -1,7 +1,7 @@
 {
   "package": {
     "id": "docgen-workspace",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "api": 1,
     "description": "Filesystem companion to the docgen plugin: render workspace files, mint files into blob refs, materialize artifacts back. Delegates rendering to `docgen` (mandatory dep); no component of its own.",
     "entry": "broker.js",
@@ -14,7 +14,7 @@
     },
     {
       "name": "docgen_file_to_blob",
-      "description": "Mint a workspace file into a blob ref (sha256:…) for chaining with docgen_compose or other tools. Args: path."
+      "description": "Mint a workspace file into a blob ref (sha256:\u2026) for chaining with docgen_compose or other tools. Args: path."
     },
     {
       "name": "docgen_blob_to_file",
@@ -22,7 +22,16 @@
     }
   ],
   "deps": [
-    { "dep_id": "docgen", "semver_range": "^0.2.0", "mandatory": true }
+    {
+      "dep_id": "docgen",
+      "semver_range": "^0.3.0",
+      "mandatory": true
+    }
   ],
-  "caps_advertised": [{ "cap": "fs.write", "scope": "docgen" }]
+  "caps_advertised": [
+    {
+      "cap": "fs.write",
+      "scope": "docgen"
+    }
+  ]
 }

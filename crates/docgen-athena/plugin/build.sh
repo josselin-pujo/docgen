@@ -18,5 +18,10 @@ wasm-tools component new \
 wasm-tools validate target/docgen-athena.component.wasm
 
 cd crates/docgen-athena/plugin
-"${ATHENA_BIN:-athena}" --pack-bundle pack-request.json --out ../../../target/docgen.bundle
-"${ATHENA_BIN:-athena}" --pack-bundle companion/pack-request.json --out ../../../target/docgen-workspace.bundle
+# Prefer the host athena packer; fall back to the stdlib pack.py when the
+# dist desktop binary can't pack (it silently exits when the app is down).
+pack() {
+  "${ATHENA_BIN:-athena}" --pack-bundle "$1" --out "$2" ||     python3 pack.py "$1" --out "$2"
+}
+pack pack-request.json ../../../target/docgen.bundle
+pack companion/pack-request.json ../../../target/docgen-workspace.bundle

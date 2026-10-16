@@ -120,6 +120,9 @@ fn render_document(
             let outcome = render_diagrams_with(&doc, &[&m, &e])?;
             warnings.extend(skipped_warnings(&outcome.skipped));
             assets.extend(outcome.assets);
+            // pptx is frozen: page/media directives are ignored, loudly
+            // (same warnings the CLI surfaces).
+            warnings.extend(docgen_office::pptx::unsupported_directive_warnings(&doc));
             let bytes = docgen_office::pptx::render_pptx(&doc, &assets)
                 .map_err(|e| docgen_core::Error::Backend(e.to_string()))?;
             docgen_office::pptx::validate_pptx(&bytes)?;
