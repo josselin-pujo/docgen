@@ -8,3 +8,7 @@ examples/*.pptx
 crates/*/fuzz/target/
 crates/*/fuzz/corpus/
 crates/*/fuzz/coverage/
+
+# CLI skill binaries (built by crates/docgen-cli/skill/scripts/build.sh)
+crates/docgen-cli/skill/scripts/docgen.exe
+crates/docgen-cli/skill/scripts/docgen-linux
