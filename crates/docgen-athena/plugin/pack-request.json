@@ -1,7 +1,7 @@
 {
   "package": {
     "id": "docgen",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "api": 1,
     "description": "Blob-native docgen renderer (no filesystem): markdown \u2192 PDF/DOCX/PPTX with figures, captions, media appendix + figures index, page breaks/keeps and landscape sections; mermaid/excalidraw \u2192 SVG/PNG. Refs in, refs out; hosted render-doc skill.",
     "entry": "broker.js",

@@ -24,6 +24,18 @@ const FORMATS = {
   render: ["pdf", "docx", "pptx"],
   diagram: ["svg", "png"],
 };
+// The artifact's media type, claimed at surfacing time: the host's media
+// sniffer only knows pdf/webp/jpeg/gif/png, so OOXML documents and SVG
+// diagrams surface as typeless blobs without this — no transcript card.
+// `load_artifact`'s `media_type` is the caller's precise claim; the blob
+// store stamps it (first non-null wins) and serves it back.
+const MIME = {
+  pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  svg: "image/svg+xml",
+  png: "image/png",
+};
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 
 const SPEC = {
@@ -194,6 +206,7 @@ function invoke(req) {
     try {
       Athena.tool.invoke(String(req.callKey || TOOL) + ":surface", "load_artifact", {
         digest: artifactRef,
+        media_type: MIME[format],
       });
       surfaced = true;
     } catch (e) {

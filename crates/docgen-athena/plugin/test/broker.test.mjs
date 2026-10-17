@@ -97,8 +97,37 @@ test("inline content: blob.put once, ref rides into the component", () => {
   assert.deepEqual(norm(calls.toolInvoke[0]), [
     "c1:surface",
     "load_artifact",
-    { digest: ARTIFACT },
+    { digest: ARTIFACT, media_type: "application/pdf" },
   ]);
+});
+
+test("every format surfaces with its precise media type", () => {
+  const cases = [
+    ["render", "pdf", "application/pdf"],
+    [
+      "render",
+      "docx",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ],
+    [
+      "render",
+      "pptx",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ],
+    ["diagram", "svg", "image/svg+xml"],
+    ["diagram", "png", "image/png"],
+  ];
+  for (const [action, format, mime] of cases) {
+    const { handler, calls } = loadBroker();
+    const r = invoke(handler, { action, format, content: "x" });
+    assert.equal(r.ok, true, action + "/" + format);
+    assert.equal(calls.toolInvoke.length, 1, action + "/" + format);
+    assert.deepEqual(
+      calls.toolInvoke[0][2],
+      { digest: ARTIFACT, media_type: mime },
+      action + "/" + format,
+    );
+  }
 });
 
 test("source ref: passed through without minting, no fs anywhere", () => {

@@ -21,7 +21,21 @@ cd crates/docgen-athena/plugin
 # Prefer the host athena packer; fall back to the stdlib pack.py when the
 # dist desktop binary can't pack (it silently exits when the app is down).
 pack() {
-  "${ATHENA_BIN:-athena}" --pack-bundle "$1" --out "$2" ||     python3 pack.py "$1" --out "$2"
+  local request="$1" out="$2"
+  rm -f "$out"
+  "${ATHENA_BIN:-athena}" --pack-bundle "$request" --out "$out" || true
+  [ -f "$out" ] || python3 pack.py "$request" --out "$out"
+  # Either packer can exit 0 without writing anything (the dist binary
+  # silently no-ops when the app is down) — a missing or unsealed bundle
+  # must fail the build, loudly, instead of being shipped.
+  python3 - "$out" <<'PY'
+import sqlite3, sys
+con = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+version = con.execute("PRAGMA user_version").fetchone()[0]
+if version != 1:
+    sys.exit(f"pack: {sys.argv[1]} has user_version={version}, expected 1")
+print(f"verified {sys.argv[1]} (user_version=1)")
+PY
 }
 pack pack-request.json ../../../target/docgen.bundle
 pack companion/pack-request.json ../../../target/docgen-workspace.bundle
