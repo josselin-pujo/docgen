@@ -184,6 +184,18 @@ mod tests {
     }
 
     #[test]
+    fn strikethrough_emits_strike_run_property() {
+        // DOCX lowers `~~…~~` to a `w:strike` run property; this pins the
+        // arm (the PDF path is the one that used to break on strike).
+        let doc = parse_document("Struck: ~~struck text~~ inline.\n").unwrap();
+        let bytes = render_docx(&doc, &BTreeMap::new()).unwrap();
+        validate_docx(&bytes).unwrap();
+        let xml = unzip_document(&bytes);
+        assert!(xml.contains("<w:strike/>"), "strike run property: {xml}");
+        assert!(xml.contains("struck"), "struck text survives");
+    }
+
+    #[test]
     fn toc_synthesizes_linked_contents() {
         let doc = parse_document(
             "---\ntitle: T\ntoc: true\n---\n\n# First {#first}\n\nText.\n\n## Second {#second}\n\nMore.\n\n### Deep {#deep}\n\nMore still.\n\n#### Too deep {#deep4}\n\nNot listed.\n",

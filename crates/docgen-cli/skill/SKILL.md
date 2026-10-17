@@ -98,6 +98,12 @@ fenced mermaid/excalidraw block is *media*. Media with a non-empty
   (```` ```mermaid {#fig:arch} place=appendix ````), and image attribute
   blocks (`![alt](url){#fig:x}`). Unknown tokens are ignored without
   error; literal braces in prose are left alone.
+- **The `{#id …}` container works on all three channels** — including
+  fences, where it may hold several attributes across its whitespace
+  (```` ```mermaid {#fig:arch caption="System"} ````). Every container
+  must be terminated: an unterminated `{#…` fails the render with an
+  explicit `invalid attribute syntax` error (older builds silently
+  dropped the id instead — check for that if a link fails on one).
 
 ## Per-format capability
 
@@ -118,6 +124,22 @@ built-in template only — a custom typst template owns its page setup.
   supported in the CLI build).
 - Raw `.excalidraw` JSON is first-class: standalone files and fenced
   ` ```excalidraw ` blocks, independent of any conversion.
+
+## New in 0.3.1 (2026-10-16)
+
+The two defects found during the 2026-10-16 end-to-end exercise are
+fixed:
+
+- **Strikethrough renders.** `~~text~~` now works in PDF as in
+  DOCX/PPTX (it used to abort the PDF render).
+- **Fence attribute containers work.** `{#fig:x caption="…"}` on a
+  fence honours the id and the caption (it used to drop the id and
+  corrupt the caption); unterminated containers now error explicitly
+  instead of failing silently later.
+
+A render failing with `label <fig-…> does not exist` still means a
+fence id did not apply — check its spelling and that every `{#…`
+container is terminated.
 
 ## Build
 

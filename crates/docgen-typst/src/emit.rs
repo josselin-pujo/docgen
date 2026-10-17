@@ -685,7 +685,7 @@ fn inline_markup(
             }
             Inline::Strikethrough(inner) => {
                 out.push_str(&format!(
-                    "#text(strike: true)[{}]",
+                    "#strike[{}]",
                     inline_markup(inner, assets, files, used_names)
                 ));
             }
@@ -1094,6 +1094,49 @@ mod tests {
         .unwrap();
         let mut assets = AssetMap::new();
         assets.insert("arch".to_string(), tiny_png());
+        let (pdf, warnings) = crate::TypstRenderer::new_embedded()
+            .render_pdf(&doc, &assets)
+            .unwrap();
+        assert!(pdf.starts_with(b"%PDF"));
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    /// `~~…~~` lowers to typst's `strike` element. `text(strike: …)` is
+    /// not a `text` argument — the whole render used to abort with
+    /// `unexpected argument: strike`.
+    #[test]
+    fn strikethrough_emits_strike_element_and_compiles() {
+        let doc = docgen_core::parse_document(
+            "Struck: ~~struck text~~ and ~~**bold struck**~~ inline.\n",
+        )
+        .unwrap();
+        let out = emit(&doc, &Default::default(), None);
+        let body = body_of(&out);
+        assert!(body.contains("#strike[struck text]"), "{body}");
+        assert!(body.contains("#strike[*bold struck*]"), "{body}");
+        let (pdf, warnings) = crate::TypstRenderer::new_embedded()
+            .render_pdf(&doc, &Default::default())
+            .unwrap();
+        assert!(pdf.starts_with(b"%PDF"));
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    /// A fence-attribute container (`{#id caption="…"}` spanning
+    /// whitespace) honours the id end-to-end: the figure label exists and
+    /// both link forms resolve (this used to render — with an auto-id and
+    /// a corrupted caption — and abort on any author link).
+    #[test]
+    fn fence_container_figure_compiles_with_both_link_forms() {
+        let doc = docgen_core::parse_document(
+            "```mermaid {#fig:z caption=\"Capped\"}\nflowchart LR\n    A --> B\n```\n\nLink: [colon](#fig:z) [dash](#fig-z).\n",
+        )
+        .unwrap();
+        let mut assets = AssetMap::new();
+        assets.insert("z".to_string(), tiny_png());
+        let out = emit(&doc, &assets, None);
+        let body = body_of(&out);
+        assert!(body.contains("<fig-z>"), "{body}");
+        assert!(body.contains("Figure 1: Capped"), "{body}");
         let (pdf, warnings) = crate::TypstRenderer::new_embedded()
             .render_pdf(&doc, &assets)
             .unwrap();

@@ -63,6 +63,13 @@ fenced mermaid/excalidraw block is *media*. Media with a non-empty
 ![System architecture](img/arch.png){#fig:arch place=appendix keep=false}
 ```
 
+The `{#id …}` container form works everywhere — image attribute blocks
+**and** fences. On a fence the container may hold several attributes
+across its whitespace: ```` ```mermaid {#fig:arch caption="System
+architecture"} ````. The container must be **terminated** — an
+unterminated `{#…` fails the render with an explicit
+`invalid attribute syntax` error rather than dropping the id silently.
+
 - Alt text is the default caption; `caption="…"` overrides it (diagrams
   only get a caption through `caption=`). Uncaptioned media renders
   unnumbered and stays out of the index.
@@ -116,7 +123,15 @@ docgen_workspace({
 ```
 
 Its siblings mint/materialize any blob for hand-offs: `docgen_file_to_blob
-{path}` → ref, `docgen_blob_to_file {ref, path}`.
+{path}` → ref, `docgen_blob_to_file {ref, path}`. Surfacing a written
+file as a card: `load_artifact {path, media_type}` — pass `media_type`
+for anything but PDF/PNG (the host's sniffer cannot identify OOXML or
+SVG): `image/svg+xml` (SVG),
+`application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+(DOCX) /
+`application/vnd.openxmlformats-officedocument.presentationml.presentation`
+(PPTX). The `docgen_compose` card carries the type itself in blob
+sessions.
 
 ## Flow (blob sessions, no filesystem)
 
@@ -128,12 +143,29 @@ Its siblings mint/materialize any blob for hand-offs: `docgen_file_to_blob
    uses**. A URL without bytes renders as a visible placeholder and the
    result lists warnings; fix by adding the missing refs.
 
+## New in 0.3.1 (2026-10-16)
+
+The two defects found during the 2026-10-16 end-to-end exercise are
+fixed:
+
+- **Strikethrough renders.** `~~text~~` now works in PDF as in
+  DOCX/PPTX (it used to abort the PDF render).
+- **Fence attribute containers work.** `{#fig:x caption="…"}` on a
+  fence honours the id and the caption (it used to drop the id and
+  corrupt the caption). See *Figures* above for the current rule:
+  terminated containers, everywhere.
+
+If a render still fails with `label <fig-…> does not exist`, check the
+fence id spelling and that every `{#…` container is terminated.
+
 ## Notes
 
 - Prefer `content` for short sources; large sources should ride as blob
   refs so bytes never transit the tool call.
 - Renders run under a 30 s / 256 MiB budget per call — split monster
   documents into sections.
+- Renders are byte-deterministic: identical inputs (source + assets)
+  yield the identical artifact digest — safe to cache or compare.
 - The artifact is a content-addressed digest: pass it on
   (`load_artifact {digest}`, other tools), or materialize it to a file
   when the session has a workspace. With no filesystem it simply stays a

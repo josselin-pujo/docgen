@@ -460,6 +460,22 @@ mod tests {
     }
 
     #[test]
+    fn strikethrough_emits_strike_attribute() {
+        // DrawingML: strike is an ATTRIBUTE of a:rPr, never a child —
+        // pins the pptx arm of `~~…~~` (the PDF path used to break).
+        let doc = parse_document("# Head {#h}\n\nStruck: ~~struck text~~ inline.\n").unwrap();
+        let bytes = render_pptx(&doc, &BTreeMap::new()).unwrap();
+        validate_pptx(&bytes).unwrap();
+        // No frontmatter title: the heading opens the first content slide.
+        let slide = read_part(&bytes, "ppt/slides/slide1.xml");
+        assert!(
+            slide.contains("strike=\"sngStrike\""),
+            "strike attribute: {slide}"
+        );
+        assert!(slide.contains("struck"), "struck text survives");
+    }
+
+    #[test]
     fn diagram_images_are_embedded() {
         let doc = parse_document("```mermaid {#d}\nflowchart TD\nA-->B\n```\n").unwrap();
         let mut assets = BTreeMap::new();

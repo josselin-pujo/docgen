@@ -5,6 +5,9 @@ pub enum Error {
     #[error("invalid frontmatter: {0}")]
     Frontmatter(String),
 
+    #[error("invalid attribute syntax: {0}")]
+    Attributes(String),
+
     #[error("diagram rendering failed: {0}")]
     Diagram(String),
 

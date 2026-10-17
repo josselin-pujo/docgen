@@ -12,6 +12,7 @@ use std::collections::VecDeque;
 
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
+use crate::Error;
 use crate::Result;
 use crate::frontmatter;
 use crate::ids::{IdAllocator, fnv1a64, slug};
@@ -35,7 +36,7 @@ pub fn parse_document(markdown: &str) -> Result<Document> {
 
     let events: VecDeque<Event> = Parser::new_ext(body, options).collect();
     let mut ctx = ParseCtx::default();
-    let blocks = ctx.parse_blocks(&events, None);
+    let blocks = ctx.parse_blocks(&events, None)?;
 
     // Frontmatter may pre-assign ids for specific blocks; reserve them so
     // auto-generated ids never collide.
@@ -67,13 +68,17 @@ impl ParseCtx {
     }
 
     /// Parses sibling blocks until `stop` (consumed) or exhaustion.
-    fn parse_blocks(&mut self, events: &VecDeque<Event>, stop: Option<TagEnd>) -> Vec<Block> {
+    fn parse_blocks(
+        &mut self,
+        events: &VecDeque<Event>,
+        stop: Option<TagEnd>,
+    ) -> Result<Vec<Block>> {
         let mut events = events.clone();
         let mut blocks = Vec::new();
         while let Some(event) = events.pop_front() {
             match event {
                 Event::Start(tag) => {
-                    if let Some(block) = self.parse_block(&mut events, tag) {
+                    if let Some(block) = self.parse_block(&mut events, tag)? {
                         blocks.push(block);
                     }
                 }
@@ -99,17 +104,21 @@ impl ParseCtx {
                 _ => {}
             }
         }
-        blocks
+        Ok(blocks)
     }
 
     /// Called with the opening `Start(tag)` already consumed.
-    fn parse_block(&mut self, events: &mut VecDeque<Event>, tag: Tag) -> Option<Block> {
+    fn parse_block(&mut self, events: &mut VecDeque<Event>, tag: Tag) -> Result<Option<Block>> {
         match tag {
             Tag::Paragraph => {
                 let _ = self.take_pending();
                 let inline = self.parse_inline(events, TagEnd::Paragraph);
                 let (pid, ann) = self.take_pending();
-                Some(self.mk_block(BlockKind::Paragraph { inline }, pid, ann))
+                Ok(Some(self.mk_block(
+                    BlockKind::Paragraph { inline },
+                    pid,
+                    ann,
+                )))
             }
             Tag::Heading {
                 level,
@@ -137,15 +146,19 @@ impl ParseCtx {
                 let wanted = wanted
                     .or(pid)
                     .unwrap_or_else(|| slug(&Inline::plain_text(&inline)));
-                Some(self.mk_block(BlockKind::Heading { level, inline }, Some(wanted), ann))
+                Ok(Some(self.mk_block(
+                    BlockKind::Heading { level, inline },
+                    Some(wanted),
+                    ann,
+                )))
             }
             Tag::BlockQuote(_) => {
-                let blocks = self.parse_blocks(events, Some(TagEnd::BlockQuote(None)));
-                Some(self.mk_block(
+                let blocks = self.parse_blocks(events, Some(TagEnd::BlockQuote(None)))?;
+                Ok(Some(self.mk_block(
                     BlockKind::BlockQuote { blocks },
                     None,
                     Annotations::default(),
-                ))
+                )))
             }
             Tag::CodeBlock(kind) => {
                 let mut code = String::new();
@@ -158,7 +171,7 @@ impl ParseCtx {
                     }
                 }
                 let (language, explicit_id, ann) = match &kind {
-                    CodeBlockKind::Fenced(info) => parse_info(info),
+                    CodeBlockKind::Fenced(info) => parse_info(info)?,
                     CodeBlockKind::Indented => (None, None, Annotations::default()),
                 };
                 let kind = match language.as_deref().and_then(DiagramFormat::from_language) {
@@ -168,7 +181,7 @@ impl ParseCtx {
                     },
                     None => BlockKind::CodeBlock { language, code },
                 };
-                Some(self.mk_block(kind, explicit_id, ann))
+                Ok(Some(self.mk_block(kind, explicit_id, ann)))
             }
             Tag::List(start) => {
                 let ordered = start.is_some();
@@ -178,7 +191,7 @@ impl ParseCtx {
                     match event {
                         Event::Start(Tag::Item) => {
                             events.pop_front();
-                            items.push(self.parse_list_item(events));
+                            items.push(self.parse_list_item(events)?);
                         }
                         Event::End(TagEnd::List(false)) => {
                             events.pop_front();
@@ -193,7 +206,7 @@ impl ParseCtx {
                         }
                     }
                 }
-                Some(self.mk_block(
+                Ok(Some(self.mk_block(
                     BlockKind::List {
                         ordered,
                         start,
@@ -201,7 +214,7 @@ impl ParseCtx {
                     },
                     None,
                     Annotations::default(),
-                ))
+                )))
             }
             Tag::Table(_) => {
                 let mut rows = Vec::new();
@@ -243,7 +256,11 @@ impl ParseCtx {
                         _ => {}
                     }
                 }
-                Some(self.mk_block(BlockKind::Table { rows }, None, Annotations::default()))
+                Ok(Some(self.mk_block(
+                    BlockKind::Table { rows },
+                    None,
+                    Annotations::default(),
+                )))
             }
             Tag::HtmlBlock => {
                 // Drop raw HTML blocks for now; roadmap: model them.
@@ -252,18 +269,18 @@ impl ParseCtx {
                         break;
                     }
                 }
-                None
+                Ok(None)
             }
             other => {
                 // Block-level start we don't model (footnotes): skip to end.
                 let end = other.to_end();
                 self.skip_to(events, end);
-                None
+                Ok(None)
             }
         }
     }
 
-    fn parse_list_item(&mut self, events: &mut VecDeque<Event>) -> ListItem {
+    fn parse_list_item(&mut self, events: &mut VecDeque<Event>) -> Result<ListItem> {
         let mut content = Vec::new();
         let mut children = Vec::new();
         while let Some(event) = events.front().cloned() {
@@ -294,7 +311,7 @@ impl ParseCtx {
                             }
                             Some(Event::Start(Tag::Item)) => {
                                 events.pop_front();
-                                sublist_items.push(self.parse_list_item(events));
+                                sublist_items.push(self.parse_list_item(events)?);
                             }
                             Some(Event::End(TagEnd::List(_))) => {
                                 events.pop_front();
@@ -318,7 +335,7 @@ impl ParseCtx {
                 }
                 Event::Start(tag @ (Tag::CodeBlock(_) | Tag::BlockQuote(_) | Tag::Table(_))) => {
                     events.pop_front();
-                    if let Some(block) = self.parse_block(events, tag) {
+                    if let Some(block) = self.parse_block(events, tag)? {
                         children.push(block);
                     }
                 }
@@ -333,7 +350,7 @@ impl ParseCtx {
                 }
             }
         }
-        ListItem { content, children }
+        Ok(ListItem { content, children })
     }
 
     /// Collects inline events until `end` (consumed). Nested containers
@@ -485,18 +502,23 @@ fn kind_prefix(kind: &BlockKind) -> &'static str {
 
 /// ```` ```mermaid {#fig:arch} place=appendix ````
 /// → (Some("mermaid"), Some("arch"), annotations)
-fn parse_info(info: &str) -> (Option<String>, Option<String>, Annotations) {
+///
+/// A `{#…}` container may wrap several attributes with its whitespace
+/// (```` {#fig:z caption="Capped"} ````), mirroring the heading and image
+/// attribute containers (D-001); an unterminated one is an error rather
+/// than the silent id drop token-scoped parsing used to produce.
+fn parse_info(info: &str) -> Result<(Option<String>, Option<String>, Annotations)> {
     let mut language = None;
     let mut id = None;
     let mut ann = Annotations::default();
-    for token in attr_split(info) {
+    for token in attr_tokens(info)? {
         if !is_attr_token(token) && language.is_none() {
             language = Some(token.to_owned());
             continue;
         }
         apply_token(&mut id, &mut ann, token);
     }
-    (language, id, ann)
+    Ok((language, id, ann))
 }
 
 /// A `Text` event directly after an image: an `{…}` attribute block, or
@@ -539,10 +561,19 @@ fn is_attr_token(token: &str) -> bool {
 /// Applies one attribute token to the pending id/annotations (D-009).
 /// Unknown keys and values are ignored without error.
 fn apply_token(id: &mut Option<String>, ann: &mut Annotations, token: &str) {
-    // `{#name}` in info strings; inside a stripped `{…}` block the braces
-    // are gone, so `#name` / `#fig:name` are the same token.
-    if let Some(rest) = token.strip_prefix("{#").and_then(|r| r.strip_suffix('}')) {
-        *id = Some(strip_fig_prefix(rest).to_owned());
+    // `{#name}` — alone, or as a container wrapping further attributes
+    // (`{#name k=v …}`, re-joined across whitespace by `attr_tokens`):
+    // the `#` on the opening brace marks the id (D-004); inside a
+    // stripped `{…}` block `#name` is the same token.
+    if token.starts_with("{#") && token.ends_with('}') && token.len() > 3 {
+        let inner = &token[2..token.len() - 1];
+        let mut inner_tokens = attr_split(inner);
+        if inner_tokens.first().is_some_and(|t| !t.contains('=')) {
+            *id = Some(strip_fig_prefix(inner_tokens.remove(0)).to_owned());
+        }
+        for t in &inner_tokens {
+            apply_token(id, ann, t);
+        }
         return;
     }
     if let Some(rest) = token.strip_prefix('#') {
@@ -607,6 +638,65 @@ fn attr_split(s: &str) -> Vec<&str> {
         out.push(&s[st..]);
     }
     out
+}
+
+/// Info-string tokenization: [`attr_split`]'s whitespace/quote law, plus
+/// a `{#` container staying ONE token across whitespace until its
+/// matching `}` (braces nest outside quotes) — so
+/// ```` {#fig:z caption="Capped"} ```` applies as one attribute group,
+/// like the heading and image containers. An unterminated container is
+/// an error: per-token parsing used to drop the id and weld `}` onto
+/// the last value, silently.
+fn attr_tokens(s: &str) -> Result<Vec<&str>> {
+    let mut out = Vec::new();
+    let mut start: Option<usize> = None;
+    // Byte offset of the `{` and open-brace depth while scanning a `{#`
+    // container.
+    let mut container: Option<(usize, usize)> = None;
+    let mut in_quotes = false;
+    let mut escaped = false;
+    for (i, c) in s.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' if in_quotes => escaped = true,
+            '"' => in_quotes = !in_quotes,
+            '{' if !in_quotes && container.is_some() => container.as_mut().unwrap().1 += 1,
+            '}' if !in_quotes && container.is_some() => {
+                let (open, depth) = container.as_mut().unwrap();
+                *depth -= 1;
+                if *depth == 0 {
+                    out.push(&s[*open..=i]);
+                    container = None;
+                }
+            }
+            c if c.is_whitespace() && !in_quotes && container.is_none() => {
+                if let Some(st) = start.take() {
+                    out.push(&s[st..i]);
+                }
+            }
+            _ => {
+                if container.is_none() && start.is_none() {
+                    if s[i..].starts_with("{#") {
+                        container = Some((i, 1));
+                    } else {
+                        start = Some(i);
+                    }
+                }
+            }
+        }
+    }
+    if let Some((open, _)) = container {
+        return Err(Error::Attributes(format!(
+            "unterminated {{…}} attribute container in info string (opened at byte {open}): {s:?}"
+        )));
+    }
+    if let Some(st) = start {
+        out.push(&s[st..]);
+    }
+    Ok(out)
 }
 
 /// Strips surrounding double quotes and unescapes `\"` and `\\` inside;
@@ -775,6 +865,68 @@ mod tests {
         assert!(b.annotations.new_page, "bare token recognized");
         assert_eq!(b.annotations.place, None, "unknown value ignored");
         assert_eq!(b.annotations.caption, None);
+    }
+
+    /// The `{#id …}` container may hold its attributes across whitespace,
+    /// like heading and image attribute blocks (D-001). Token-scoped
+    /// parsing used to drop the id and weld `}` onto the caption.
+    #[test]
+    fn fence_container_holds_id_and_attributes() {
+        let doc = parse_document(
+            "```mermaid {#fig:z caption=\"Capped\"}\nflowchart LR\n    A --> B\n```\n",
+        )
+        .unwrap();
+        let b = &doc.blocks[0];
+        assert_eq!(b.id, "z");
+        assert_eq!(
+            b.annotations.caption.as_deref(),
+            Some("Capped"),
+            "no stray quotes or closing brace"
+        );
+    }
+
+    #[test]
+    fn fence_container_mixes_with_loose_tokens() {
+        let doc = parse_document(
+            "```mermaid {#fig:z caption=\"Capped\"} place=appendix keep=false\nA\n```\n",
+        )
+        .unwrap();
+        let b = &doc.blocks[0];
+        assert_eq!(b.id, "z");
+        assert_eq!(b.annotations.place, Some(Placement::Appendix));
+        assert_eq!(b.annotations.keep, Some(false));
+    }
+
+    #[test]
+    fn fence_container_quotes_shield_braces() {
+        let doc = parse_document("```mermaid {#z caption=\"a } b\"}\nA\n```\n").unwrap();
+        assert_eq!(doc.blocks[0].id, "z");
+        assert_eq!(doc.blocks[0].annotations.caption.as_deref(), Some("a } b"));
+    }
+
+    /// Silent id drops are the hazard: a container that never closes must
+    /// fail loudly instead of parsing to an auto-id.
+    #[test]
+    fn unterminated_fence_container_is_an_error() {
+        let err = parse_document("```mermaid {#fig:z caption=\"Capped\"\nA\n```\n")
+            .expect_err("unterminated container must error");
+        let msg = err.to_string();
+        assert!(msg.contains("unterminated"), "{msg}");
+        assert!(msg.contains("info string"), "{msg}");
+    }
+
+    #[test]
+    fn attr_tokens_join_containers() {
+        assert_eq!(
+            attr_tokens("mermaid {#fig:z caption=\"Capped\"} keep=false").unwrap(),
+            vec!["mermaid", "{#fig:z caption=\"Capped\"}", "keep=false"]
+        );
+        // The self-closed form is unchanged.
+        assert_eq!(
+            attr_tokens("rust {#a} loose=1").unwrap(),
+            vec!["rust", "{#a}", "loose=1"]
+        );
+        assert!(attr_tokens("mermaid {#z caption=\"open").is_err());
     }
 
     #[test]
