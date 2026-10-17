@@ -1,0 +1,67 @@
+docgen
+Copyright 2026 Josselin Pujo
+
+This product is licensed under the Apache License, Version 2.0
+(see LICENSE at the root of this repository).
+
+======================================================================
+ Third-party components
+======================================================================
+
+The authoritative, machine-readable inventory of every dependency —
+name, version, license expression, SHA-256 checksum, dependency graph
+and target coverage — is maintained at:
+
+    docs/sbom/sbom.cdx.json             CycloneDX 1.5 SBOM
+    docs/sbom/dependency-inventory.tsv  flat audit table
+    docs/sbom/LICENSE-REPORT.md         analysis and obligations
+
+Source distributions pull dependencies from crates.io, where each
+package's license text ships inside its .crate archive. Binary
+distributions must additionally carry the texts called out below;
+vendored copies live in third-party/ at the repository root.
+
+--- EPL-2.0 -----------------------------------------------------------
+
+merman-elk-layered 0.8.0-alpha.7 (reached via merman's `layout-elk`
+feature, enabled by docgen-mermaid) is licensed under the Eclipse
+Public License 2.0 — text at third-party/EPL-2.0.txt. It is used as an
+unmodified crates.io dependency; EPL-2.0 terms apply to that component
+and modifications of it, not to docgen itself.
+
+--- MPL-2.0 -----------------------------------------------------------
+
+cssparser, cssparser-macros, dtoa-short and selectors (reached via
+lol_html in merman-core) are Mozilla Public License 2.0 — text at
+third-party/MPL-2.0.txt. MPL is file-level copyleft: covered files
+stay MPL-2.0 when redistributed.
+
+--- Fonts embedded from typst-assets 0.15.1 (feature "fonts") ---------
+
+The binaries bundle typefaces under several free font licenses, and
+generated PDFs subset-embed them: Libertinus Serif (SIL OFL 1.1),
+NewComputerModern and DejaVu (GUST Font License 1.0), NewCM10-Regular
+(GPL-3.0-or-later with GUST Font Exception and Distribution
+Exception), the PDF base-14 Foxit fonts (BSD-3-Clause, PDFium/Google)
+and ICC profiles / data tables (CC0-1.0). The complete upstream NOTICE
+with all license texts is vendored verbatim at
+third-party/NOTICE.typst-assets and must be redistributed with any
+binary that embeds these fonts.
+
+--- Fonts bundled in docgen-excalidraw --------------------------------
+
+crates/docgen-excalidraw/assets/*.ttf (Excalifont, Virgil, Nunito,
+Cascadia, Liberation Sans — subset conversions of the
+@excalidraw/excalidraw npm fonts) are MIT / SIL OFL 1.1; texts and
+per-font copyright and Reserved-Font-Name notices live in
+crates/docgen-excalidraw/assets/LICENSES/.
+
+--- Everything else ---------------------------------------------------
+
+All remaining dependencies are MIT, Apache-2.0 (including
+"Apache-2.0 WITH LLVM-exception", e.g. the wasmtime/cranelift stack),
+BSD-2/3-Clause, ISC, Zlib, Unicode-3.0, CC0-1.0, BSL-1.0, Unlicense,
+or dual combinations whose permissive branch applies; the SBOM records
+the exact per-package expression. ittapi/ittapi-sys (GPL-2.0-only OR
+BSD-3-Clause; BSD branch) are dev-only test tooling and are never
+distributed.

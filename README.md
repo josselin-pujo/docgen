@@ -212,13 +212,22 @@ WASI preview1 surface is never needed.
 
 ## Licensing notes
 
-- typst, typst-assets fonts (Libertinus OFL, NewCM OFL, DejaVu – free),
-  merman core (MIT OR Apache-2.0).
-- merman's default layout engine is **ELK, EPL-2.0** (weak copyleft):
-  distributing a binary that includes it requires keeping EPL notices and
-  source provenance for the ELK part. If that is unacceptable, build merman
-  with `default-features = false` + `complete-svg` (Cytoscape layout) — the
-  `docgen-mermaid` feature surface will expose this as a Cargo feature.
+- docgen is **Apache-2.0** (`LICENSE` at the repo root; every crate
+  declares it via `workspace.package`). Third-party attributions and
+  obligations: `NOTICE`, vendored license texts in `third-party/` and
+  `crates/docgen-excalidraw/assets/LICENSES/`, full inventory + analysis
+  in `docs/sbom/`.
+- typst, typst-assets fonts (Libertinus OFL; NewCM + DejaVu GUST Font
+  License; NewCM10-Regular GPL-3+ with Font/Distribution Exceptions —
+  texts in `third-party/NOTICE.typst-assets`, which must ship with
+  binaries), merman core (MIT OR Apache-2.0).
+- merman's layout engine is **ELK, EPL-2.0** (weak copyleft), a
+  deliberate dependency decision (2026-10-17): distributing a binary
+  that includes it requires keeping the EPL notice
+  (`third-party/EPL-2.0.txt`). The permissive alternative,
+  merman's `layout-cytoscape` (`manatee`, MIT OR Apache-2.0), was
+  tested and rejected for now — its layout ignores `flowchart`
+  direction hints, visibly regressing flowcharts (`target/elkcmp/`).
 
 ## Roadmap
 
