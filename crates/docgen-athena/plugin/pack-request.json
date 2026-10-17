@@ -1,11 +1,11 @@
 {
   "package": {
     "id": "docgen",
-    "version": "0.3.1",
+    "version": "0.3.2",
     "api": 1,
     "description": "Blob-native docgen renderer (no filesystem): markdown \u2192 PDF/DOCX/PPTX with figures, captions, media appendix + figures index, page breaks/keeps and landscape sections; mermaid/excalidraw \u2192 SVG/PNG. Refs in, refs out; hosted render-doc skill.",
     "entry": "broker.js",
-    "license": "MIT OR Apache-2.0"
+    "license": "Apache-2.0"
   },
   "files": {
     "skills/render-doc/SKILL.md": {

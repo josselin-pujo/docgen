@@ -125,7 +125,7 @@ built-in template only — a custom typst template owns its page setup.
 - Raw `.excalidraw` JSON is first-class: standalone files and fenced
   ` ```excalidraw ` blocks, independent of any conversion.
 
-## New in 0.3.1 (2026-10-16)
+## New in 0.3.2 (2026-10-16)
 
 The two defects found during the 2026-10-16 end-to-end exercise are
 fixed:

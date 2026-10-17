@@ -143,7 +143,7 @@ sessions.
    uses**. A URL without bytes renders as a visible placeholder and the
    result lists warnings; fix by adding the missing refs.
 
-## New in 0.3.1 (2026-10-16)
+## New in 0.3.2 (2026-10-16)
 
 The two defects found during the 2026-10-16 end-to-end exercise are
 fixed:

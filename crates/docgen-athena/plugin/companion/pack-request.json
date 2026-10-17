@@ -1,11 +1,11 @@
 {
   "package": {
     "id": "docgen-workspace",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "api": 1,
     "description": "Filesystem companion to the docgen plugin: render workspace files, mint files into blob refs, materialize artifacts back. Delegates rendering to `docgen` (mandatory dep); no component of its own.",
     "entry": "broker.js",
-    "license": "MIT OR Apache-2.0"
+    "license": "Apache-2.0"
   },
   "tools": [
     {
