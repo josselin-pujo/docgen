@@ -31,11 +31,21 @@ artifact: missing image bytes, diagrams no renderer handled, and — on
 PDF — figures scaled below 50% to fit the page. Surface them.
 
 - **`render`** — markdown with YAML frontmatter → PDF, Word document, or
-  slide deck. `mermaid` and `excalidraw` fenced blocks render natively
-  (mermaid math labels degrade — this build has no math chain). `toc: true`
+  slide deck. `mermaid` and `excalidraw` fenced blocks render natively.
+  `toc: true`
   frontmatter adds a Contents outline (PDF) or a static, linked table of
   contents (DOCX).
 - **`diagram`** — a mermaid source or raw excalidraw JSON → SVG or PNG.
+
+## Math
+
+`$…$` inline and a `$$…$$` display paragraph are typeset **in PDF** —
+LaTeX-ish notation: Greek, fracs, roots, sub/superscripts, sums/integrals
+with under/over limits in display math, matrices (`pmatrix`), `cases`,
+`aligned` multi-line equations, `\left(…\right)`, accents, `\text`.
+Unknown commands degrade to visible upright text rather than failing the
+render. In DOCX/PPTX (and inside mermaid labels) math stays **literal
+source text** — those targets have no equation typesetter.
 
 ## Documents: frontmatter
 
@@ -68,7 +78,7 @@ The `{#id …}` container form works everywhere — image attribute blocks
 across its whitespace: ```` ```mermaid {#fig:arch caption="System
 architecture"} ````. The container must be **terminated** — an
 unterminated `{#…` fails the render with an explicit
-`invalid attribute syntax` error rather than dropping the id silently.
+`invalid attribute syntax` error.
 
 - Alt text is the default caption; `caption="…"` overrides it (diagrams
   only get a caption through `caption=`). Uncaptioned media renders
@@ -81,7 +91,9 @@ unterminated `{#…` fails the render with an explicit
 - `keep=false` lets a figure split across pages (default: figures keep
   image and caption together).
 - Figures and diagrams auto-scale to fit the page (width **and** height);
-  a warning reports scales below 50%.
+  a warning reports scales below 50%. A render error `label <fig-…>
+  does not exist` means a link targets an id no block set — check the
+  fence id spelling and that every `{#…` container is terminated.
 
 ## Page control
 
@@ -90,8 +102,8 @@ unterminated `{#…` fails the render with an explicit
   content. On a heading it spans the section (until the next heading of
   level ≤ its own); on a figure it applies to that figure alone. It is
   **orientation-only**: when the orientation already matches, nothing
-  breaks — figures flow inline (D-013). In DOCX a differing `page=`
-  figure becomes its own section.
+  breaks — figures flow inline. In DOCX a differing `page=` figure
+  becomes its own section.
 - Internal links: `[text](#section-id)` and `[text](#fig:name)` become
   clickable links in PDF and DOCX.
 
@@ -103,9 +115,10 @@ unterminated `{#…` fails the render with an explicit
 | Appendix + figures index | ✓ with page numbers | ✓ links only (no page numbers) | ✗ |
 | `new-page`, `keep=`, `page=` | ✓ | ✓ | ✗ — ignored **with a warning** |
 | Internal links | ✓ | ✓ | external only |
+| `$…$` / `$$…$$` math | ✓ typeset | literal text | literal text |
 
-PPTX is frozen at status quo: directives it cannot honor are ignored and
-reported in the result's warnings.
+PPTX ignores directives it cannot honor and reports them in the
+result's warnings.
 
 ## Filesystem sessions
 
@@ -142,21 +155,6 @@ sessions.
 3. For images, pass `assets` — `name` must be the **exact URL the markdown
    uses**. A URL without bytes renders as a visible placeholder and the
    result lists warnings; fix by adding the missing refs.
-
-## New in 0.3.2 (2026-10-16)
-
-The two defects found during the 2026-10-16 end-to-end exercise are
-fixed:
-
-- **Strikethrough renders.** `~~text~~` now works in PDF as in
-  DOCX/PPTX (it used to abort the PDF render).
-- **Fence attribute containers work.** `{#fig:x caption="…"}` on a
-  fence honours the id and the caption (it used to drop the id and
-  corrupt the caption). See *Figures* above for the current rule:
-  terminated containers, everywhere.
-
-If a render still fails with `label <fig-…> does not exist`, check the
-fence id spelling and that every `{#…` container is terminated.
 
 ## Notes
 

@@ -13,6 +13,7 @@
 //! Document dates should come from frontmatter.
 
 pub mod emit;
+pub mod math;
 mod world;
 
 use docgen_core::assets::AssetMap;

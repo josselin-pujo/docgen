@@ -997,6 +997,7 @@ dependencies = [
  "merman-render",
  "sha2 0.10.9",
  "thiserror 2.0.21",
+ "typst-assets",
 ]
 
 [[package]]
@@ -2387,8 +2388,6 @@ dependencies = [
 [[package]]
 name = "merman-export"
 version = "0.8.0-alpha.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0dc5232c2df52a41fce172a832974dfd45d3f02f1ffa7429c0ed6528eb008d3"
 dependencies = [
  "cssparser",
  "data-url",
@@ -3183,8 +3182,6 @@ dependencies = [
 [[package]]
 name = "ratex-unicode-font"
 version = "0.1.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c460464b7fba27343b2b391179ac6c86fcffac5116455158e2b08ce80866fd8"
 dependencies = [
  "fontdb",
  "system-fonts",

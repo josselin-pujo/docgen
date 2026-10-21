@@ -67,7 +67,11 @@ fn collect_inline_urls(inlines: &[Inline], seen: &mut HashSet<String>, out: &mut
                 collect_inline_urls(inner, seen, out);
             }
             Inline::Link { text, .. } => collect_inline_urls(text, seen, out),
-            Inline::Text(_) | Inline::Code(_) | Inline::SoftBreak | Inline::HardBreak => {}
+            Inline::Text(_)
+            | Inline::Code(_)
+            | Inline::Math { .. }
+            | Inline::SoftBreak
+            | Inline::HardBreak => {}
         }
     }
 }
@@ -300,8 +304,21 @@ pub enum Inline {
     Emphasis(Vec<Inline>),
     Strikethrough(Vec<Inline>),
     Code(String),
-    Link { url: String, text: Vec<Inline> },
-    Image { url: String, alt: Vec<Inline> },
+    Link {
+        url: String,
+        text: Vec<Inline>,
+    },
+    Image {
+        url: String,
+        alt: Vec<Inline>,
+    },
+    /// Math source (LaTeX subset), authored as `$…$` (inline) or a
+    /// display-math paragraph (`$$…$$`). Typeset by the PDF backend; other
+    /// backends degrade to [`Inline::math_literal`].
+    Math {
+        latex: String,
+        display: bool,
+    },
     SoftBreak,
     HardBreak,
 }
@@ -312,6 +329,17 @@ impl Inline {
         let mut out = String::new();
         Self::write_plain(inlines, &mut out);
         out
+    }
+
+    /// The literal-text form of a math span — exactly what these sources
+    /// rendered before math existed, so backends without a typesetter (and
+    /// the text flattening) stay byte-stable.
+    pub fn math_literal(latex: &str, display: bool) -> String {
+        if display {
+            format!("$${latex}$$")
+        } else {
+            format!("${latex}$")
+        }
     }
 
     fn write_plain(inlines: &[Inline], out: &mut String) {
@@ -326,6 +354,9 @@ impl Inline {
                 }
                 Inline::Link { text, .. } => Self::write_plain(text, out),
                 Inline::Image { alt, .. } => Self::write_plain(alt, out),
+                Inline::Math { latex, display } => {
+                    out.push_str(&Self::math_literal(latex, *display))
+                }
                 Inline::SoftBreak | Inline::HardBreak => out.push(' '),
             }
         }

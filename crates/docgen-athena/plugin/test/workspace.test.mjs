@@ -184,7 +184,7 @@ test("workspace: writeBlob refusal keeps the digest", () => {
     stubs: {
       blobs: { "a.md": REF_SRC },
       writeBlob: () => {
-        throw new Error("fs.write refused: missing grant fs.write=docgen");
+        throw new Error("fs.write refused: missing grant fs.write=docgen-workspace");
       },
     },
   });

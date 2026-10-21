@@ -710,6 +710,13 @@ fn flatten_runs(inlines: &[Inline], flags: RunFlags) -> Vec<Run> {
                 }
             }
             Inline::Image { alt, .. } => flatten_into(alt, flags, &mut out),
+            Inline::Math { latex, display } => push(
+                Run {
+                    text: Inline::math_literal(latex, *display),
+                    ..Default::default()
+                },
+                &mut out,
+            ),
             Inline::SoftBreak => push(
                 Run {
                     text: " ".into(),

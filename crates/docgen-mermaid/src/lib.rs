@@ -13,6 +13,24 @@ use merman::svg::export::RasterOptions;
 use merman::svg::{CssOverridePolicy, ScopedCssPostprocessor, SvgPipeline};
 use merman::{OperationControl, PngRequest, RenderOutput, RenderRequest, Renderer, SvgRequest};
 use merman_render::RenderResourcePolicy;
+use std::sync::OnceLock;
+
+/// Registers the typst-assets font set (the PDF engine's embedded fonts)
+/// into merman-export's shared raster font database, before the first PNG
+/// render. On `wasm32-unknown-unknown` `load_system_fonts()` finds nothing,
+/// so without a registered font usvg silently drops every label from mermaid
+/// PNG output (shapes rendered, no text — found by dogfooding a hosted
+/// Athena session). With the set registered, raster labels resolve to
+/// Libertinus/DejaVu exactly like the direct-PDF path, and natively the bytes
+/// merely join the system fonts as extra fallbacks. Idempotent; the result is
+/// ignored because a concurrent renderer winning the race is fine.
+fn ensure_raster_fonts() {
+    static REGISTERED: OnceLock<()> = OnceLock::new();
+    REGISTERED.get_or_init(|| {
+        let _ =
+            merman::svg::export::register_raster_fonts(typst_assets::fonts().map(<[u8]>::to_vec));
+    });
+}
 
 /// merman's flowchart CSS hardcodes `opacity: 0.5` on edge-label plates
 /// (`#merman .edgeLabel rect`), parroting mermaid.js — half the edge line
@@ -112,6 +130,7 @@ impl MermaidRenderer {
     }
 
     pub fn render_png(&self, source: &str) -> Result<Vec<u8>> {
+        ensure_raster_fonts();
         let output = self
             .renderer
             .render(RenderRequest::png(

@@ -55,9 +55,16 @@ roadmap item).
   fonts compiled in from `typst-assets` (Libertinus + NewCM math + DejaVu
   mono), deterministic output (`World::today` returns `None` — document
   dates come from frontmatter). `toc: true` prepends a `Contents` outline
-  (typst `#outline`). Inline images (PNG/JPEG/GIF/SVG) render from paths
-  relative to the source; an image alone in its paragraph becomes a centered
-  figure. Per-page PNG rendering via `typst-render`.
+  (typst `#outline`). Math (`$…$` inline, `$$…$$` display) is typeset:
+  docgen-core carries `Inline::Math` with the LaTeX-ish source and
+  `docgen-typst` translates it to typst math (every emitted symbol name
+  verified against the embedded typst — unknown names fail the compile —
+  unknown commands degrade to visible text; display paragraphs wrap big
+  operators in `limits()` because typst never switches to display layout
+  on its own). DOCX/PPTX keep math as literal source text. Inline images
+  (PNG/JPEG/GIF/SVG) render from paths relative to the source; an image
+  alone in its paragraph becomes a centered figure. Per-page PNG rendering
+  via `typst-render`.
 - **Custom typst templates**: pass a `.typ` file as the main document shell
   (`docgen render doc.md --template shell.typ`, or
   `TypstRenderer::with_template`). Every compile exposes two virtual
@@ -115,7 +122,8 @@ roadmap item).
   `render-pdf`, `render-docx`, `render-pptx`, `render-diagram-svg`,
   `version`) that **imports nothing**. Build the core module
   for `wasm32-unknown-unknown` (zero host imports — merman's katex chain
-  is feature-gated off for this crate only, and `getrandom` gets a
+  is import-free since the vendored `ratex-unicode-font` patch gates its
+  system-fonts/web-sys fallback off for wasm32, and `getrandom` gets a
   deterministic custom backend) and componentize with
   `wasm-tools component new`; `cargo test -p docgen-wasm` asserts the
   import surface. CI (`.github/workflows/ci.yml`) runs fmt/clippy/tests,
@@ -181,14 +189,13 @@ release artifacts):
   references std's startup/panic/misc paths keep alive. A host can satisfy
   all fifteen with trivial stubs (empty environ/args, EBADF on fds, host
   PRNG).
-- **wasm32-unknown-unknown**: compiles and links with **zero WASI imports**.
-  The only imports are 5 wasm-bindgen placeholder functions
-  (`__wbindgen_throw`, externref table ops, describe, jspi poll) pulled by
-  merman's math-label font fallback chain (`ratex-svg → system-fonts →
-  web-sys`), which is a hard dep of merman's `math` feature. A browser host
-  gets these for free; a bare embedder writes 5 one-line stubs — or drops
-  merman's math feature / gets `system-fonts` made optional upstream for a
-  completely import-free module.
+- **wasm32-unknown-unknown**: compiles and links with **zero imports**.
+  The mermaid math chain (katex/ratex) is compiled in: its only import
+  source used to be the `ratex-unicode-font` system-fonts fallback
+  (`ratex-svg → system-fonts → web-sys`, 5 wasm-bindgen placeholders);
+  the vendored `ratex-unicode-font` patch gates that dependency off for
+  wasm32 (CJK/emoji math fallback then simply finds nothing, which every
+  caller already handles). Re-measured 2026-10-18.
 
 **Consequence for packaging:** a small custom WIT surface is not just
 possible, it is the right shape. Plan (M5): a `world docgen { export
@@ -221,6 +228,12 @@ WASI preview1 surface is never needed.
   License; NewCM10-Regular GPL-3+ with Font/Distribution Exceptions —
   texts in `third-party/NOTICE.typst-assets`, which must ship with
   binaries), merman core (MIT OR Apache-2.0).
+- Two crates are **vendored in tree** (`third-party/`, patched via
+  `[patch.crates-io]`, see each crate's `VENDORED.md`):
+  `merman-export` 0.8.0-alpha.7 (MIT OR Apache-2.0, both texts kept) adds
+  the raster-font registration API, `ratex-unicode-font` 0.1.14 (MIT,
+  license text added — upstream ships none) drops its web-sys dependency
+  on wasm32. Drop the patches when upstream ships equivalents.
 - merman's layout engine is **ELK, EPL-2.0** (weak copyleft), a
   deliberate dependency decision (2026-10-17): distributing a binary
   that includes it requires keeping the EPL notice
@@ -278,9 +291,10 @@ wasm-safe, and text becomes SVG paths either way.)
 ### M5 — wasm packaging & CI ✅ (shipped; refinements below)
 
 Shipped exactly as sketched above: WIT world importing nothing (see the
-status section), zero-import `wasm32-unknown-unknown` core (katex chain
-feature-gated off for the wasm crate; deterministic `getrandom` custom
-backend), `wasm-tools component new` componentization, import-surface
+status section), zero-import `wasm32-unknown-unknown` core with the katex
+chain compiled in (import-free via the vendored `ratex-unicode-font`
+patch; deterministic `getrandom` custom backend), `wasm-tools component
+new` componentization, import-surface
 assertion tests, per-crate golden hashes, cargo-fuzz targets
 (frontmatter splitter, typst emitter), and a four-job GitHub Actions
 workflow (test / wasm / component / fuzz-build).

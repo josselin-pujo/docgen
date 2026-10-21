@@ -33,10 +33,15 @@ pub fn parse_document(markdown: &str) -> Result<Document> {
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_HEADING_ATTRIBUTES);
     options.insert(Options::ENABLE_TASKLISTS);
+    // `$…$` / `$$…$$` become InlineMath/DisplayMath events, carried through
+    // the model as `Inline::Math` (typeset by the PDF backend, literal text
+    // elsewhere).
+    options.insert(Options::ENABLE_MATH);
 
     let events: VecDeque<Event> = Parser::new_ext(body, options).collect();
     let mut ctx = ParseCtx::default();
-    let blocks = ctx.parse_blocks(&events, None)?;
+    let mut events = events;
+    let blocks = ctx.parse_blocks(&mut events, None)?;
 
     // Frontmatter may pre-assign ids for specific blocks; reserve them so
     // auto-generated ids never collide.
@@ -67,18 +72,20 @@ impl ParseCtx {
         )
     }
 
-    /// Parses sibling blocks until `stop` (consumed) or exhaustion.
+    /// Parses sibling blocks until `stop` (consumed) or exhaustion. Consumes
+    /// from the shared queue: a nested call (block quote) must drain the
+    /// events it parses, or the outer loop sees them a second time and the
+    /// quoted content renders twice.
     fn parse_blocks(
         &mut self,
-        events: &VecDeque<Event>,
+        events: &mut VecDeque<Event>,
         stop: Option<TagEnd>,
     ) -> Result<Vec<Block>> {
-        let mut events = events.clone();
         let mut blocks = Vec::new();
         while let Some(event) = events.pop_front() {
             match event {
                 Event::Start(tag) => {
-                    if let Some(block) = self.parse_block(&mut events, tag)? {
+                    if let Some(block) = self.parse_block(events, tag)? {
                         blocks.push(block);
                     }
                 }
@@ -392,6 +399,20 @@ impl ParseCtx {
             Event::Code(t) => {
                 self.after_image = false;
                 Some(Inline::Code(t.into_string()))
+            }
+            Event::InlineMath(t) => {
+                self.after_image = false;
+                Some(Inline::Math {
+                    latex: t.into_string(),
+                    display: false,
+                })
+            }
+            Event::DisplayMath(t) => {
+                self.after_image = false;
+                Some(Inline::Math {
+                    latex: t.into_string(),
+                    display: true,
+                })
             }
             Event::SoftBreak => {
                 self.after_image = false;
@@ -813,6 +834,47 @@ mod tests {
                 assert!(!ordered);
                 assert_eq!(items.len(), 2);
                 assert_eq!(items[0].children.len(), 1);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    /// A block quote's content must be consumed by the quote: the nested
+    /// `parse_blocks` call used to work on a clone of the queue, so the
+    /// quoted paragraphs leaked back into the outer loop and rendered twice
+    /// (in every backend).
+    #[test]
+    fn block_quote_content_parses_once() {
+        let doc = parse_document("> quoted once\n\nafter\n").unwrap();
+        assert_eq!(doc.blocks.len(), 2, "{:?}", doc.blocks);
+        match &doc.blocks[0].kind {
+            BlockKind::BlockQuote { blocks } => {
+                assert_eq!(blocks.len(), 1);
+                assert!(matches!(&blocks[0].kind, BlockKind::Paragraph { .. }));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        match &doc.blocks[1].kind {
+            BlockKind::Paragraph { inline } => assert_eq!(Inline::plain_text(inline), "after"),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nested_block_quotes() {
+        let doc = parse_document("> outer\n>\n> > inner\n").unwrap();
+        assert_eq!(doc.blocks.len(), 1);
+        match &doc.blocks[0].kind {
+            BlockKind::BlockQuote { blocks } => {
+                assert_eq!(blocks.len(), 2, "paragraph + nested quote, each once");
+                assert!(matches!(&blocks[0].kind, BlockKind::Paragraph { .. }));
+                match &blocks[1].kind {
+                    BlockKind::BlockQuote { blocks } => {
+                        assert_eq!(blocks.len(), 1);
+                        assert!(matches!(&blocks[0].kind, BlockKind::Paragraph { .. }));
+                    }
+                    other => panic!("unexpected {other:?}"),
+                }
             }
             other => panic!("unexpected {other:?}"),
         }

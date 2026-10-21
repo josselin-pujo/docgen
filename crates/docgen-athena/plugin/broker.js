@@ -201,25 +201,32 @@ function invoke(req) {
 
   // Best-effort: surface the artifact to the transcript from the existing
   // digest (a failure here must never fail the tool).
-  let surfaced = false;
+  // Surfacing: the reply's media side-channel — the harness journals the
+  // media.put from the run result (cause to THIS tool.call, its own
+  // role:media authority), so surfacing needs no capabilities here and
+  // works identically on every placement. (The old delegation to
+  // load_artifact via tool.invoke only worked when the tools shim sat in
+  // the dispatch path — a plugin-to-plugin invoke executed the native
+  // deref and silently dropped the journaling.)
+  let media;
   if (surface) {
-    try {
-      Athena.tool.invoke(String(req.callKey || TOOL) + ":surface", "load_artifact", {
-        digest: artifactRef,
-        media_type: MIME[format],
-      });
-      surfaced = true;
-    } catch (e) {
-      console.error("[docgen] artifact surfacing failed: " + prose(e));
-    }
+    media = {
+      digest: artifactRef,
+      mediaType: MIME[format],
+      bytes: 0,
+      name: TOOL + "-" + format,
+      path: "",
+    };
   }
 
   let output = "rendered " + format + "\nartifact: " + artifactRef;
-  if (surfaced) output += "\nsurfaced as a media card";
+  if (media) output += "\nsurfaced as a media card";
   if (warnings.length) {
     output += "\nwarnings:\n  - " + warnings.join("\n  - ");
   }
-  return { ok: true, output: output };
+  const out = { ok: true, output: output };
+  if (media) out.media = media;
+  return out;
 }
 
 // --- helpers ---------------------------------------------------------------

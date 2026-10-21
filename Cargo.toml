@@ -43,6 +43,21 @@ merman = { version = "0.8.0-alpha.7", default-features = false }
 # Pinned with `=` to match merman's own pin, so the two resolve to one copy.
 merman-render = { version = "=0.8.0-alpha.7", default-features = false }
 
+# Vendored (third-party/, unmodified upstream unless the crate's VENDORED.md
+# says otherwise). Two fixes docgen needs that aren't upstream yet — drop the
+# patches when an upstream release ships equivalents:
+# - merman-export (MIT OR Apache-2.0): register_raster_fonts() — feeds extra
+#   font bytes (the typst-assets set) into the shared raster fontdb, whose
+#   system-font load is a no-op on wasm32-unknown-unknown, where all mermaid
+#   PNG label text would otherwise be dropped.
+# - ratex-unicode-font (MIT): system-fonts (locale-aware discovery) pulled
+#   web-sys/wasm-bindgen onto the import-free wasm component; the dep and its
+#   only use are cfg-gated off for wasm32, letting merman's math feature (the
+#   mermaid math-label chain) build with zero imports.
+[patch.crates-io]
+merman-export = { path = "third-party/merman-export" }
+ratex-unicode-font = { path = "third-party/ratex-unicode-font" }
+
 # Size-tuned on purpose (measured table in README "Release profile").
 # WARNING: fat LTO + codegen-units=1 make a FULL release build take 12–16
 # minutes (almost all of it the LTO link) — including the wasm release

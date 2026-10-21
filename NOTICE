@@ -56,6 +56,17 @@ Cascadia, Liberation Sans — subset conversions of the
 per-font copyright and Reserved-Font-Name notices live in
 crates/docgen-excalidraw/assets/LICENSES/.
 
+--- Vendored in-tree (patched) ----------------------------------------
+
+Two dependency sources are vendored under third-party/ and built via
+`[patch.crates-io]` with small documented local changes (each directory
+carries a VENDORED.md describing them and keeping the license texts):
+merman-export 0.8.0-alpha.7 (MIT OR Apache-2.0) and
+ratex-unicode-font 0.1.14 (MIT, © the RaTeX authors; upstream ships no
+license text, the standard MIT notice is added in-tree). MIT/OR-2.0
+terms apply to those components and modifications of them, not to
+docgen itself.
+
 --- Everything else ---------------------------------------------------
 
 All remaining dependencies are MIT, Apache-2.0 (including

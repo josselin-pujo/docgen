@@ -77,3 +77,14 @@ fn golden_pdf_image() {
         .unwrap();
     check("pdf-image", &pdf);
 }
+
+const MATH_DOC: &str = include_str!("golden/math-doc.md");
+
+#[test]
+fn golden_math_pdf() {
+    let doc = docgen_core::parse_document(MATH_DOC).unwrap();
+    let (pdf, _warnings) = docgen_typst::TypstRenderer::new_embedded()
+        .render_pdf(&doc, &Default::default())
+        .unwrap();
+    check("math-pdf", &pdf);
+}

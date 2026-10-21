@@ -117,6 +117,15 @@ promote it on your own initiative.
 - **merman**: prepend `%%{init: {"htmlLabels": false}}%%` (rasterizers
   drop `<foreignObject>` labels); its CSS hardcodes edge-label plate
   opacity 0.5 — fixed via a scoped-CSS postprocessor, see README M1 notes.
+  `mermaid math` (`$$…$$` labels) renders through HTML too, so it stays
+  literal text in docgen; true math needs a browserless lowering upstream.
+- **vendored crates** (`third-party/` + `[patch.crates-io]`, each with a
+  `VENDORED.md`): `merman-export` (`register_raster_fonts` — without it
+  the wasm raster fontdb is empty and mermaid PNG labels are silently
+  dropped; docgen-mermaid seeds the typst-assets set before the first
+  PNG) and `ratex-unicode-font` (system-fonts/web-sys gated off for
+  wasm32 — what made the katex chain import-free). Drop both when
+  upstream ships equivalents; keep their license texts when updating.
 - **pulldown-cmark 0.13**: header rows are `Tag::TableHead`.
 - **typst 0.15**: `Library` at crate root (+`LibraryExt`), `Source::new`
   needs a real `FileId`, `typst-layout` provides `PagedDocument`.

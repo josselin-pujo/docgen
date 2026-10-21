@@ -19,6 +19,12 @@ merman = { workspace = true, features = [
 # Direct dep only to name `RenderResourcePolicy` (merman doesn't re-export
 # its render crate); features arrive through merman's forwarding.
 merman-render = { workspace = true }
+# The PDF engine's embedded font set, registered into merman-export's raster
+# fontdb (via the `merman::svg::export` re-export) before the first PNG
+# render: on wasm32-unknown-unknown the raster fontdb has no system fonts, so
+# without this every mermaid PNG label is silently dropped. Same crate/bytes
+# docgen-typst links — nothing new in the binary.
+typst-assets = { version = "0.15.1", features = ["fonts"] }
 thiserror = { workspace = true }
 
 [features]

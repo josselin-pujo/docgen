@@ -94,11 +94,16 @@ test("inline content: blob.put once, ref rides into the component", () => {
     content: { ref: "sha256:inline" },
     assets: [],
   });
-  assert.deepEqual(norm(calls.toolInvoke[0]), [
-    "c1:surface",
-    "load_artifact",
-    { digest: ARTIFACT, media_type: "application/pdf" },
-  ]);
+  // The de-hex-era surfacing: the media rides the reply's side-channel
+  // (no load_artifact delegation — toolInvoke stays untouched).
+  assert.equal(calls.toolInvoke.length, 0);
+  assert.deepEqual(norm(r.media), {
+    digest: ARTIFACT,
+    mediaType: "application/pdf",
+    bytes: 0,
+    name: "docgen_compose-pdf",
+    path: "",
+  });
 });
 
 test("every format surfaces with its precise media type", () => {
@@ -121,12 +126,9 @@ test("every format surfaces with its precise media type", () => {
     const { handler, calls } = loadBroker();
     const r = invoke(handler, { action, format, content: "x" });
     assert.equal(r.ok, true, action + "/" + format);
-    assert.equal(calls.toolInvoke.length, 1, action + "/" + format);
-    assert.deepEqual(
-      calls.toolInvoke[0][2],
-      { digest: ARTIFACT, media_type: mime },
-      action + "/" + format,
-    );
+    assert.equal(calls.toolInvoke.length, 0, action + "/" + format);
+    assert.equal(r.media.mediaType, mime, action + "/" + format);
+    assert.equal(r.media.digest, ARTIFACT, action + "/" + format);
   }
 });
 
@@ -212,7 +214,11 @@ test("wasm error envelope becomes readable failure", () => {
   assert.match(r.output, /wall clock exceeded/);
 });
 
-test("surfacing is best-effort: its failure never fails the tool", () => {
+test("surfacing rides the reply's media side-channel (no load_artifact delegation)", () => {
+  // The de-hex-era design: the reply carries `media` and the harness
+  // journals the media.put from its run result — surfacing needs no
+  // capability here and cannot fail broker-side (a load_artifact
+  // outage is irrelevant; nothing delegates to it).
   const { handler } = loadBroker({
     stubs: {
       toolInvoke: () => {
@@ -222,7 +228,10 @@ test("surfacing is best-effort: its failure never fails the tool", () => {
   });
   const r = invoke(handler, { action: "render", format: "pdf", content: "x" });
   assert.equal(r.ok, true);
-  assert.doesNotMatch(r.output, /surfaced as a media card/);
+  assert.match(r.output, /surfaced as a media card/);
+  assert.equal(r.media.digest, "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+  assert.equal(r.media.mediaType, "application/pdf");
+  assert.equal(r.media.name, "docgen_compose-pdf");
 });
 
 test("surface=false via config and via args skips surfacing", () => {

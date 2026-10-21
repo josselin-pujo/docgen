@@ -282,6 +282,76 @@
    "version": "0.1.0"
   },
   {
+   "bom-ref": "pkg:cargo/merman-export@0.8.0-alpha.7",
+   "description": "Bounded PNG, JPEG, and PDF export for terminally validated Merman SVG.",
+   "licenses": [
+    {
+     "expression": "MIT OR Apache-2.0"
+    }
+   ],
+   "name": "merman-export",
+   "properties": [
+    {
+     "name": "docgen:scope",
+     "value": "runtime"
+    },
+    {
+     "name": "docgen:targets",
+     "value": "host,wasm32-wasip1,wasm32-unknown-unknown"
+    },
+    {
+     "name": "docgen:source",
+     "value": null
+    },
+    {
+     "name": "docgen:workspace-member",
+     "value": "false"
+    },
+    {
+     "name": "docgen:license-verdict",
+     "value": "ok"
+    }
+   ],
+   "purl": "pkg:cargo/merman-export@0.8.0-alpha.7",
+   "type": "library",
+   "version": "0.8.0-alpha.7"
+  },
+  {
+   "bom-ref": "pkg:cargo/ratex-unicode-font@0.1.14",
+   "description": "System Unicode font discovery for RaTeX fallback rendering",
+   "licenses": [
+    {
+     "expression": "MIT"
+    }
+   ],
+   "name": "ratex-unicode-font",
+   "properties": [
+    {
+     "name": "docgen:scope",
+     "value": "runtime"
+    },
+    {
+     "name": "docgen:targets",
+     "value": "host,wasm32-wasip1,wasm32-unknown-unknown"
+    },
+    {
+     "name": "docgen:source",
+     "value": null
+    },
+    {
+     "name": "docgen:workspace-member",
+     "value": "false"
+    },
+    {
+     "name": "docgen:license-verdict",
+     "value": "ok"
+    }
+   ],
+   "purl": "pkg:cargo/ratex-unicode-font@0.1.14",
+   "type": "library",
+   "version": "0.1.14"
+  },
+  {
    "bom-ref": "pkg:cargo/ab_glyph@0.2.32",
    "description": "API for loading, scaling, positioning and rasterizing OpenType font glyphs.",
    "hashes": [
@@ -5633,7 +5703,7 @@
     },
     {
      "name": "docgen:targets",
-     "value": "host,wasm32-wasip1,wasm32-unknown-unknown"
+     "value": "host"
     },
     {
      "name": "docgen:source",
@@ -5674,7 +5744,7 @@
     },
     {
      "name": "docgen:targets",
-     "value": "host,wasm32-wasip1,wasm32-unknown-unknown"
+     "value": "host"
     },
     {
      "name": "docgen:source",
@@ -5715,7 +5785,7 @@
     },
     {
      "name": "docgen:targets",
-     "value": "host,wasm32-wasip1,wasm32-unknown-unknown"
+     "value": "host"
     },
     {
      "name": "docgen:source",
@@ -5756,7 +5826,7 @@
     },
     {
      "name": "docgen:targets",
-     "value": "host,wasm32-wasip1,wasm32-unknown-unknown"
+     "value": "host"
     },
     {
      "name": "docgen:source",
@@ -5797,7 +5867,7 @@
     },
     {
      "name": "docgen:targets",
-     "value": "host,wasm32-wasip1,wasm32-unknown-unknown"
+     "value": "host"
     },
     {
      "name": "docgen:source",
@@ -5838,7 +5908,7 @@
     },
     {
      "name": "docgen:targets",
-     "value": "host,wasm32-wasip1,wasm32-unknown-unknown"
+     "value": "host"
     },
     {
      "name": "docgen:source",
@@ -8585,7 +8655,7 @@
     },
     {
      "name": "docgen:targets",
-     "value": "host,wasm32-wasip1,wasm32-unknown-unknown"
+     "value": "host"
     },
     {
      "name": "docgen:source",
@@ -9749,47 +9819,6 @@
     }
    ],
    "purl": "pkg:cargo/merman-elk-layered@0.8.0-alpha.7",
-   "type": "library",
-   "version": "0.8.0-alpha.7"
-  },
-  {
-   "bom-ref": "pkg:cargo/merman-export@0.8.0-alpha.7",
-   "description": "Bounded PNG, JPEG, and PDF export for terminally validated Merman SVG.",
-   "hashes": [
-    {
-     "alg": "SHA-256",
-     "content": "b0dc5232c2df52a41fce172a832974dfd45d3f02f1ffa7429c0ed6528eb008d3"
-    }
-   ],
-   "licenses": [
-    {
-     "expression": "MIT OR Apache-2.0"
-    }
-   ],
-   "name": "merman-export",
-   "properties": [
-    {
-     "name": "docgen:scope",
-     "value": "runtime"
-    },
-    {
-     "name": "docgen:targets",
-     "value": "host,wasm32-wasip1,wasm32-unknown-unknown"
-    },
-    {
-     "name": "docgen:source",
-     "value": "registry+https://github.com/rust-lang/crates.io-index"
-    },
-    {
-     "name": "docgen:workspace-member",
-     "value": "false"
-    },
-    {
-     "name": "docgen:license-verdict",
-     "value": "ok"
-    }
-   ],
-   "purl": "pkg:cargo/merman-export@0.8.0-alpha.7",
    "type": "library",
    "version": "0.8.0-alpha.7"
   },
@@ -11537,7 +11566,7 @@
     },
     {
      "name": "docgen:targets",
-     "value": "host,wasm32-wasip1,wasm32-unknown-unknown"
+     "value": "host"
     },
     {
      "name": "docgen:source",
@@ -13111,47 +13140,6 @@
     }
    ],
    "purl": "pkg:cargo/ratex-types@0.1.14",
-   "type": "library",
-   "version": "0.1.14"
-  },
-  {
-   "bom-ref": "pkg:cargo/ratex-unicode-font@0.1.14",
-   "description": "System Unicode font discovery for RaTeX fallback rendering",
-   "hashes": [
-    {
-     "alg": "SHA-256",
-     "content": "8c460464b7fba27343b2b391179ac6c86fcffac5116455158e2b08ce80866fd8"
-    }
-   ],
-   "licenses": [
-    {
-     "expression": "MIT"
-    }
-   ],
-   "name": "ratex-unicode-font",
-   "properties": [
-    {
-     "name": "docgen:scope",
-     "value": "runtime"
-    },
-    {
-     "name": "docgen:targets",
-     "value": "host,wasm32-wasip1,wasm32-unknown-unknown"
-    },
-    {
-     "name": "docgen:source",
-     "value": "registry+https://github.com/rust-lang/crates.io-index"
-    },
-    {
-     "name": "docgen:workspace-member",
-     "value": "false"
-    },
-    {
-     "name": "docgen:license-verdict",
-     "value": "ok"
-    }
-   ],
-   "purl": "pkg:cargo/ratex-unicode-font@0.1.14",
    "type": "library",
    "version": "0.1.14"
   },
@@ -16170,7 +16158,7 @@
     },
     {
      "name": "docgen:targets",
-     "value": "host,wasm32-wasip1,wasm32-unknown-unknown"
+     "value": "host"
     },
     {
      "name": "docgen:source",
@@ -19286,7 +19274,7 @@
     },
     {
      "name": "docgen:targets",
-     "value": "host,wasm32-wasip1,wasm32-unknown-unknown"
+     "value": "host"
     },
     {
      "name": "docgen:source",
@@ -19327,7 +19315,7 @@
     },
     {
      "name": "docgen:targets",
-     "value": "host,wasm32-wasip1,wasm32-unknown-unknown"
+     "value": "host"
     },
     {
      "name": "docgen:source",
@@ -19368,7 +19356,7 @@
     },
     {
      "name": "docgen:targets",
-     "value": "host,wasm32-wasip1,wasm32-unknown-unknown"
+     "value": "host"
     },
     {
      "name": "docgen:source",
@@ -19409,7 +19397,7 @@
     },
     {
      "name": "docgen:targets",
-     "value": "host,wasm32-wasip1,wasm32-unknown-unknown"
+     "value": "host"
     },
     {
      "name": "docgen:source",
@@ -20721,7 +20709,7 @@
     },
     {
      "name": "docgen:targets",
-     "value": "host,wasm32-wasip1,wasm32-unknown-unknown"
+     "value": "host"
     },
     {
      "name": "docgen:source",
@@ -22487,7 +22475,8 @@
    "dependsOn": [
     "pkg:cargo/merman-render@0.8.0-alpha.7",
     "pkg:cargo/merman@0.8.0-alpha.7",
-    "pkg:cargo/thiserror@2.0.21"
+    "pkg:cargo/thiserror@2.0.21",
+    "pkg:cargo/typst-assets@0.15.1"
    ],
    "ref": "pkg:cargo/docgen-mermaid@0.1.0"
   },
@@ -22526,6 +22515,30 @@
     "pkg:cargo/wit-bindgen@0.62.0"
    ],
    "ref": "pkg:cargo/docgen-wasm@0.1.0"
+  },
+  {
+   "dependsOn": [
+    "pkg:cargo/cssparser@0.36.0",
+    "pkg:cargo/data-url@0.3.2",
+    "pkg:cargo/merman-core@0.8.0-alpha.7",
+    "pkg:cargo/merman-render@0.8.0-alpha.7",
+    "pkg:cargo/quick-xml@0.41.0",
+    "pkg:cargo/resvg@0.47.0",
+    "pkg:cargo/svgtypes@0.16.1",
+    "pkg:cargo/thiserror@2.0.21",
+    "pkg:cargo/tiny-skia@0.12.0",
+    "pkg:cargo/unicase@2.9.0",
+    "pkg:cargo/usvg@0.47.0"
+   ],
+   "ref": "pkg:cargo/merman-export@0.8.0-alpha.7"
+  },
+  {
+   "dependsOn": [
+    "pkg:cargo/fontdb@0.23.0",
+    "pkg:cargo/system-fonts@0.1.2",
+    "pkg:cargo/ttf-parser@0.25.1"
+   ],
+   "ref": "pkg:cargo/ratex-unicode-font@0.1.14"
   },
   {
    "dependsOn": [
@@ -24154,22 +24167,6 @@
   },
   {
    "dependsOn": [
-    "pkg:cargo/cssparser@0.36.0",
-    "pkg:cargo/data-url@0.3.2",
-    "pkg:cargo/merman-core@0.8.0-alpha.7",
-    "pkg:cargo/merman-render@0.8.0-alpha.7",
-    "pkg:cargo/quick-xml@0.41.0",
-    "pkg:cargo/resvg@0.47.0",
-    "pkg:cargo/svgtypes@0.16.1",
-    "pkg:cargo/thiserror@2.0.21",
-    "pkg:cargo/tiny-skia@0.12.0",
-    "pkg:cargo/unicase@2.9.0",
-    "pkg:cargo/usvg@0.47.0"
-   ],
-   "ref": "pkg:cargo/merman-export@0.8.0-alpha.7"
-  },
-  {
-   "dependsOn": [
     "pkg:cargo/merman-elk-layered@0.8.0-alpha.7",
     "pkg:cargo/thiserror@2.0.21"
    ],
@@ -24733,14 +24730,6 @@
     "pkg:cargo/serde@1.0.229"
    ],
    "ref": "pkg:cargo/ratex-types@0.1.14"
-  },
-  {
-   "dependsOn": [
-    "pkg:cargo/fontdb@0.23.0",
-    "pkg:cargo/system-fonts@0.1.2",
-    "pkg:cargo/ttf-parser@0.25.1"
-   ],
-   "ref": "pkg:cargo/ratex-unicode-font@0.1.14"
   },
   {
    "dependsOn": [

@@ -208,6 +208,14 @@ impl<'a> Emitter<'a> {
                 // A lone-image paragraph is a figure (D-004): captioned and
                 // numbered via the media plan, else exactly as before.
                 Some((url, alt)) => self.figure_block(block, Some((url, alt)), orientation, out),
+                None if lone_display_math(inline).is_some() => {
+                    // A display-math paragraph becomes a typst block
+                    // equation in display style (big operators take
+                    // under/over scripts via `limits()` — typst 0.15 never
+                    // switches layout on its own).
+                    let latex = lone_display_math(inline).unwrap_or_default();
+                    out.push_str(&format!("${}$\n\n", crate::math::translate_display(latex)));
+                }
                 None => out.push_str(&format!(
                     "{}\n\n",
                     inline_markup(inline, self.assets, &mut self.files, &mut self.used_names)
@@ -722,9 +730,33 @@ fn inline_markup(
             },
             Inline::SoftBreak => out.push(' '),
             Inline::HardBreak => out.push_str("\\ "),
+            // `$…$` inline math, translated from the LaTeX-ish source. A
+            // display flag inside a mixed paragraph stays inline — only a
+            // paragraph consisting solely of display math becomes a block
+            // equation (see `lone_display_math`).
+            Inline::Math { latex, .. } => {
+                out.push_str(&format!("${}$", crate::math::translate(latex)))
+            }
         }
     }
     out
+}
+
+/// The LaTeX source if `inlines` is exactly one display-math span (plus
+/// surrounding whitespace text).
+fn lone_display_math(inlines: &[Inline]) -> Option<&str> {
+    let mut latex = None;
+    for inline in inlines {
+        match inline {
+            Inline::Text(t) if t.trim().is_empty() => {}
+            Inline::Math {
+                latex: src,
+                display: true,
+            } if latex.is_none() => latex = Some(src.as_str()),
+            _ => return None,
+        }
+    }
+    latex
 }
 
 /// Escapes typst markup specials so arbitrary author text is inert.

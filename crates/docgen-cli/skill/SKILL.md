@@ -16,7 +16,31 @@ Binaries live in this skill's `scripts/`:
 - `scripts/docgen.exe` — Windows x86_64 (MSVC)
 - `scripts/docgen-linux` — Linux x86_64, static (musl)
 
-If they are missing, build them — see *Build* at the bottom.
+## References
+
+Read before authoring — each is self-contained and grounded in what this
+exact binary supports:
+
+- [references/markdown-primer.md](references/markdown-primer.md) — the
+  complete markdown dialect: frontmatter, blocks, inline styles,
+  attribute syntax (`{#id …}`, `page=`, `keep=`), figures and captions,
+  ids and internal links. Read when authoring or reviewing any document.
+- [references/mermaid-primer.md](references/mermaid-primer.md) — every
+  supported mermaid diagram type with snippets, plus docgen integration
+  (SVG-text labels, edge-label plates, captions, sizing). Read before
+  writing mermaid.
+- [references/excalidraw-primer.md](references/excalidraw-primer.md) —
+  raw `.excalidraw` JSON as a first-class input: element and field
+  coverage, bindings, copy-paste element templates, authoring
+  conventions. Read before generating scenes.
+- [references/typst-templates.md](references/typst-templates.md) —
+  authoring custom PDF templates: the `meta`/body contract, the hermetic
+  world's constraints, a typst language tour, diagnostics. Read before
+  writing a `--template` file.
+- [templates/](templates/) — five ready-to-use templates (classic
+  `report`, two-column `paper`, `design-doc`, `handbook`, `memo`),
+  package-free and verified against this binary. Use directly or as
+  starting points.
 
 ## Run
 
@@ -28,19 +52,22 @@ docgen diagram INPUT --format svg|png [--out FILE]
 
 - `render` — the main path: markdown + frontmatter → document. Images
   resolve relative to the source file; missing ones render as visible
-  placeholders with a warning.
+  placeholders with a warning. `--template` takes a typst template
+  (PDF), a `.docx` with `{{placeholders}}` + a `{{docgen:body}}` marker
+  paragraph (DOCX), or a `.pptx` whose masters/layouts/theme style the
+  generated slides (PPTX).
 - `diff` — structural diff of two revisions rendered as a PPTX with
-  revision chips, a removed-content slide and a summary. (`--format
-  docx` exists in the libraries but is parked pending a round-trip
-  design.)
+  revision chips, a removed-content slide and a summary (pptx only).
 - `diagram` — a standalone `.mmd`/mermaid file or raw `.excalidraw` JSON
   (detected by extension, then content) → SVG or PNG.
 
 Warnings print to stderr: missing/unreadable images, diagrams no
 renderer handled, figures scaled below 50% to fit the page, and — on
-pptx — page/media directives the frozen pptx backend ignores.
+pptx — page/media directives the pptx backend ignores. Surface them.
 
-## Documents: frontmatter
+## Documents in one screen
+
+Frontmatter:
 
 ```yaml
 ---
@@ -57,14 +84,12 @@ media:
 ---
 ```
 
-Unknown keys are preserved and passed through to templates (typst
-`meta`).
+Unknown keys are preserved and passed through to PDF templates (typst
+`meta`); DOCX/PPTX templates see the scalar keys as `{{title}}`-style
+placeholders.
 
-## Figures, captions, placement
-
-A **lone-image paragraph** (`![alt](url)` alone in a paragraph) or a
-fenced mermaid/excalidraw block is *media*. Media with a non-empty
-**caption** is a numbered figure ("Figure N", document-wide).
+Figures: a **lone-image paragraph** or a fenced mermaid/excalidraw block
+is *media*; with a non-empty caption it becomes a numbered figure.
 
 ```markdown
 ![System architecture](img/arch.png){#fig:arch place=appendix keep=false}
@@ -75,16 +100,18 @@ fenced mermaid/excalidraw block is *media*. Media with a non-empty
   unnumbered and stays out of the index.
 - `{#fig:name}` (fences, images) and `{#name}` (headings) set block ids;
   internal links `[text](#section-id)` and `[text](#fig:name)` become
-  clickable in PDF and DOCX.
+  clickable in PDF and DOCX. A render error `label <fig-…> does not
+  exist` means a link targets an id no block set — check the spelling
+  and that every `{#…` container is terminated.
 - `place=inline|appendix` overrides the `media.placement` default per
-  item. Appendix-placed figures leave a "Figure N" link at their original
-  position and render in a back-matter appendix.
+  item. Appendix-placed figures leave a "Figure N" link at their
+  original position and render in a back-matter appendix.
 - `keep=false` lets a figure split across pages (default: figures keep
   image and caption together).
 - Figures and diagrams auto-scale to fit the page (width **and**
   height); a deterministic warning reports scales below 50%.
 
-## Page control
+Page control:
 
 - `new-page` — start the block on a fresh page (heading or fence token).
 - `page=landscape|portrait` — real page-geometry change, never rotated
@@ -102,8 +129,7 @@ fenced mermaid/excalidraw block is *media*. Media with a non-empty
   fences, where it may hold several attributes across its whitespace
   (```` ```mermaid {#fig:arch caption="System"} ````). Every container
   must be terminated: an unterminated `{#…` fails the render with an
-  explicit `invalid attribute syntax` error (older builds silently
-  dropped the id instead — check for that if a link fails on one).
+  explicit `invalid attribute syntax` error.
 
 ## Per-format capability
 
@@ -115,48 +141,18 @@ fenced mermaid/excalidraw block is *media*. Media with a non-empty
 | Internal links | ✓ | ✓ | external only |
 | `--template` | typst template | .docx template | .pptx template |
 
-PPTX is frozen at status quo. Note: page controls in PDF apply to the
-built-in template only — a custom typst template owns its page setup.
+Note: page controls in PDF apply to the built-in template only — a
+custom typst template owns its page setup
+([references/typst-templates.md](references/typst-templates.md)).
 
 ## Diagrams
 
-- `mermaid` fenced blocks and files render natively (math labels
-  supported in the CLI build).
+- `mermaid` fenced blocks and files render natively — supported types
+  and integration details:
+  [references/mermaid-primer.md](references/mermaid-primer.md).
 - Raw `.excalidraw` JSON is first-class: standalone files and fenced
-  ` ```excalidraw ` blocks, independent of any conversion.
-
-## New in 0.3.2 (2026-10-16)
-
-The two defects found during the 2026-10-16 end-to-end exercise are
-fixed:
-
-- **Strikethrough renders.** `~~text~~` now works in PDF as in
-  DOCX/PPTX (it used to abort the PDF render).
-- **Fence attribute containers work.** `{#fig:x caption="…"}` on a
-  fence honours the id and the caption (it used to drop the id and
-  corrupt the caption); unterminated containers now error explicitly
-  instead of failing silently later.
-
-A render failing with `label <fig-…> does not exist` still means a
-fence id did not apply — check its spelling and that every `{#…`
-container is terminated.
-
-## Build
-
-`scripts/build.sh` (bash; run from anywhere) builds both binaries from
-the repo and drops them next to itself:
-
-```bash
-bash crates/docgen-cli/skill/scripts/build.sh
-```
-
-Needs a Rust toolchain. The musl binary requires a real musl C
-toolchain (typst's `stacker` pulls `psm`, whose assembly needs
-`musl-gcc`): on a Linux x86_64 host it builds natively; from Windows the
-script builds inside the default **WSL distro** (needs `cargo` and
-`musl-gcc` there — on Arch: `pacman -S rust musl`). Both are `--release`
-builds with fat LTO — expect **12–16 minutes each on a cold tree**; the
-profile is the point (small, deterministic binaries), don't "fix" it.
+  ` ```excalidraw ` blocks, independent of any conversion —
+  [references/excalidraw-primer.md](references/excalidraw-primer.md).
 
 ## Notes
 

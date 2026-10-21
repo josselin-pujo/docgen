@@ -1684,7 +1684,11 @@ fn collect_link_targets(
                 collect_link_targets(inner, push_target, out, seen);
             }
             Inline::Image { alt, .. } => collect_link_targets(alt, push_target, out, seen),
-            Inline::Text(_) | Inline::Code(_) | Inline::SoftBreak | Inline::HardBreak => {}
+            Inline::Text(_)
+            | Inline::Code(_)
+            | Inline::Math { .. }
+            | Inline::SoftBreak
+            | Inline::HardBreak => {}
         }
     }
 }

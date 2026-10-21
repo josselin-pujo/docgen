@@ -186,6 +186,19 @@ fn walk(
             Inline::Strikethrough(inner) => walk(inner, bold, italic, true, code, link, out),
             Inline::Link { url, text } => walk(text, bold, italic, strike, code, Some(url), out),
             Inline::Image { alt, .. } => walk(alt, bold, italic, strike, code, link, out),
+            // No equation typesetting on slides: keep the authored source
+            // visible exactly as it rendered before math existed.
+            Inline::Math { latex, display } => {
+                push_run(
+                    out,
+                    bold,
+                    italic,
+                    strike,
+                    code,
+                    link,
+                    &Inline::math_literal(latex, *display),
+                );
+            }
         }
     }
 }

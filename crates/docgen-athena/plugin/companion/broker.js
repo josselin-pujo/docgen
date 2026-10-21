@@ -264,7 +264,13 @@ function workspace(req) {
     else if (line.startsWith("surfaced")) output += "\n" + line;
   }
   for (const n of notes) output += "\n  - " + n;
-  return { ok: true, output: output };
+  // The media side-channel: the foundation's reply carries the surfaced
+  // reference (digest/type/name); spreading it here lets the harness
+  // journal the media.put from THIS tool's run result — the card lands
+  // attributed to the tool the model actually called.
+  const out2 = { ok: true, output: output };
+  if (reply.media) out2.media = reply.media;
+  return out2;
 }
 
 function mint(req) {

@@ -11,6 +11,8 @@ examples/*.pptx
 crates/*/fuzz/target/
 crates/*/fuzz/corpus/
 crates/*/fuzz/coverage/
+# standalone test runs inside vendored crates (VENDORED.md)
+third-party/*/target/
 
 # CLI skill binaries (built by crates/docgen-cli/skill/scripts/build.sh)
 crates/docgen-cli/skill/scripts/docgen.exe
